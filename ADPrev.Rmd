@@ -1,0 +1,75 @@
+---
+title: "Análise de Dados Previdenciários - ADPrev"
+author: "Marcos F Silva"
+date: '`r format(Sys.Date(), "%d/%m/%Y")`'
+output: 
+  html_document:
+    toc: true 
+    toc_float: false
+    toc_depth: 4  
+    theme: cosmo
+    highlight: tango  
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, comment = NA)
+#knitr::opts_knit$set(root.dir = "C:\\Users\\Marcos\\OneDrive\\TribunalRJ\\DadosSPrev\\ADPrev\\dados")
+
+options(warn = -1, width=180, scipen = 20)
+```
+
+Antes de iniciarmos qualquer análise, é necessário carregar os pacotes que serão utilizados:
+
+```{r}
+# Carregar os pacotes necessários
+#--------------------------------
+library(tidyr)
+library(readxl)
+library(writexl)
+library(readr)
+library(dplyr)
+library(lubridate)
+library(knitr)
+library(ggplot2)
+library(stringr)
+library(scales)
+```
+
+
+```{r intro, child='ADPrev-Introducao.Rmd', eval=TRUE}
+
+``` 
+
+```{r crp, child='ADPrev-CRP.Rmd', eval=TRUE}
+
+``` 
+
+```{r dair, child='ADPrev-DAIR.Rmd', eval=TRUE}
+
+``` 
+
+```{r dipr , child='ADPrev-DIPR.Rmd', eval=F}
+
+``` 
+
+```{r parcel , child='ADPrev-Parcelamentos.Rmd', eval=F}
+
+``` 
+
+```{r fluxo , child='ADPrev-FluxoAtuarial.Rmd', eval=F}
+
+``` 
+
+```{r isp , child='ADPrev-ISP.Rmd', eval=F}
+
+``` 
+
+```{r acesso_dados , child='ADPrev-BaixarDadosSPrev.Rmd', eval=FALSE}
+
+``` 
+
+```{r api-cvm , child='ADPrev-MicrodadosCVM.Rmd', eval=FALSE}
+
+``` 
+
+

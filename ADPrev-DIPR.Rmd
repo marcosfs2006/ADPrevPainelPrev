@@ -1,0 +1,485 @@
+</br>
+
+```{r, echo=FALSE}
+rm(list = ls())
+```
+
+# DIPR
+
+Neste capítulo vamos tratar das possibilidades de análise relativa à base de dados do DIPR. Vamos trabalhar com as bases de dados `DIPR-2018-30042019.xlsx` e `DIPR-2019-30042019.xlsx` disponibilizadas pela SPrev as quais compreendem os exercícios de 2018 e 2019. 
+
+Como de costume, vamos realizar a importação dos dados. Como temos uma planilha Excel vamos utilizar a função `read_excel()` do pacote `readxl`.
+
+```{r} 
+#setwd("..\\dados")
+arquivos_dipr <- c("DIPR-2018-30042019.xlsx", "DIPR-2019-30042019.xlsx")
+dipr <- lapply(arquivos_dipr,
+               read_excel,
+               sheet = "diprResultadoPrevidenciario",
+               skip = 4, col_names = FALSE)
+dipr <- do.call('rbind', dipr)
+```
+
+Como a planilha possui um cabeçalho contendo a denominação das colunas a importação foi feita sem os nomes das variáveis. Iremos, a seguir, fazer a inclusão do nome das mesmas:
+
+```{r}
+names(dipr) <- c("ente", "uf", "competencia", "plano_segreg", "dt_info", "bc_pat_serv", 
+  "bc_pat_serv_ug", "bc_pat_apo", "bc_pat_pen", "bc_serv", "bc_apo",
+  "bc_pen", "ct_pat_serv", "ct_pat_serv_ug", "ct_pat_apo", "ct_pat_pen",
+  "ct_serv", "ct_apo", "ct_pen", "deduc_pat", "deduc_pat_outros", "deduc_seg",
+  "deduc_seg_outros", "aportes_amortiz", "aportes_insufin", "aportes_despadm",
+  "aportes_pagtesouro", "aportes_outros", "parcelamentos", "bcug_pat", "bcug_serv",
+  "bcug_serv_afast", "bcug_apos", "bcug_pen", "ctug_pat", "ctug_serv", "ctug_serv_afast",
+  "ctug_apos", "ctug_pen", "rb_serv", "rb_apos", "rb_pen", "nb_serv", "nb_apos", "nb_pen",
+  "nb_dep", "ing_contr", "ing_aportes", "ing_parc", "ing_acres_leg", "ing_contr_cedlic",
+  "ing_comprev", "ing_aplicfin", "ing_ativos", "ing_outros", "desp_apo", "desp_pen_morte",
+  "desp_auxdoenca", "desp_salmater", "desp_salfam", "desp_auxreclu", "desp_decjud",
+  "desp_beneftesouro", "desp_despadm", "desp_invest", "desp_rest", "desp_comprev", 
+  "desp_outras", "total_receita", "total_despesa", "resutado_final", "bcmil_pat_ativ",
+  "bcmil_ativos", "bcmil_reserva", "bcmil_pen", "ctmil_pat", "ctmil_ativos", "ctmil_reserva",
+  "ctmil_pen", "rbmil", "nbmil_ativos", "nbmil_reserva", "nbmil_pen", "nbmil_dep",
+  "ingmil_contr", "ingmil_aportes", "ingmil_outras", "despmil_reseva", "despmil_penmorte",
+  "despmil_outras", "resultado_final")
+
+```
+
+Realizada a importação dos dados, será necessário realizar o pré-processamento dos mesmos com vistas a deixá-los mais adequados ao uso posterior.  
+
+```{r}
+# Limpar alguns dados
+dipr$ente <- gsub("^Governo d[oea] |Prefeitura Municipal d[eoa] ", "", dipr$ente)
+
+
+# Função para converter para formato numerico
+convnum <- function(x){
+  x <- gsub("\\.", "", x)
+  x <- gsub(",", ".", x)
+  as.numeric(x)
+}
+
+# convertendo os dados...
+dipr[,-c(1:5)] <- sapply(dipr[,-c(1:5)], convnum)
+
+```
+
+
+
+
+Importado o conjunto de dados, vamos salvá-lo no formato `.Rds` do R para uso posterior.
+
+```{r, eval=FALSE}
+setwd("..\\dados-produzidos")
+saveRDS(dipr, file = "dipr2018-2019_DtGer30042019.Rds")
+```
+
+
+
+
+
+
+
+</br>
+
+## Pendências na Entrega do DIPR
+
+Para um efetivo acompanhamento da gestão dos RPPS é necessário identificarmos quais RPPS não estão encaminhando o DIPR à SPrev/ME.
+
+Aliás, esse é um ponto de verificação constante na Resolução Atricon  05/2018 que **Aprova as Diretrizes de Controle Externo Atricon nº 3214/2018, relacionadas à temática “Controle Externo na gestão dos Regimes Próprios de Previdência Social”**.
+
+_**25.1** (...)_    
+
+_u) se há o envio tempestivo à Secretaria de Previdência (SPREV) do Ministério da Fazenda dos demonstrativos obrigatórios (**DIPR**, DRAA, DPIN, DAIR e demonstrativos contábeis)_. 
+
+Para executarmos esta verificação nossa estratégia será comparar os Entes que constam da base de dados do DIPR com uma relação que contenha **todos** os RPPS brasileiros. Nossa escolha para a obtenção dessa relação foi o a base de dados do Indicador de Situação Previdenciária - ISP contida no arquivo `RESULTADO-ISP-2018.01.xlsx` disponibilizado pela SPrev. 
+
+Infelizmente a base do DIPR não possui informação quanto ao CNPJ do Ente. Esta é uma variável importante quando queremos relizar o cruzamento entre as diversas bases de dados disponibilizadas pela SPrev bem como com outras bases de dados. Assim, o cruzamento será feito com base no **nome** do Ente, o que nos coloca a necessidade de garantir que o nome do ente esteja escrito da mesma maneira nas duas bases. Para tante algumas transformações deverão ser realizadas na variável que contém o nome dos Entes.
+
+Vamos importar os dados do ISP:
+
+```{r}
+setwd("..\\dados")
+isp <- read_excel("RESULTADO-ISP-2018.01.xlsx")
+isp <- isp[, -c(31, 32, 33, 34)]
+names(isp) <- c("ENTE",    "UF", "REGIAO", "GRUPO", "ESCRITURA",	"APLICFIN",
+                "CONTRIB", "COBSERVPUB", "CONCBENEF",	"EQUILATUAR",	"PARTSEG",	"PARCELTEMP",
+                "REGRAS",	 "UTILRECPREV",	"CONF",	"CLASSIF_CONF",	"ENDIVID",	"SOLVFIN",
+                "RAZAOAI", "COMPROMATUAR",	"SOLVATUAR",	"EQUIL",	"CLASSIF_EQUIL",
+                "DRAA",    "DIPR",	"DPIN",	"DAIR",	"TRANSP",	"CLASSIF_TRANSP",	"ISP201801")
+
+```
+
+Como será necessário juntar essa base com a base do DIPR, vamos limpar um pouco a base de dados para tornar viável essa operação. 
+
+```{r}
+dipr$ente <- toupper(dipr$ente)
+dipr$ente <- iconv(dipr$ente, from = "utf-8", to="ASCII//TRANSLIT")
+dipr$ente <- paste(dipr$ente, dipr$uf, sep=" - ")
+
+isp$ENTE <- gsub("^GOVERNO DO ", "", isp$ENTE)
+isp$ENTE <- iconv(isp$ENTE, from = "utf-8", to="ASCII//TRANSLIT")
+```
+
+Agora vamos tentar juntar as bases e fazer a checagem. Vamos ver como estão os Entes do Estado do Mato Grosso.
+
+```{r}
+uf <- "MT" # testar AC depois... tá com problemas...
+
+entrega_dipr <- isp %>%
+  select(ENTE) %>%
+  left_join(dipr[, c("ente", "competencia")], by=c("ENTE" = "ente")) %>%
+  mutate(entregou = "X",
+         competencia = factor(competencia, levels = unique(dipr$competencia), ordered = TRUE)) %>%
+  filter(grepl(paste(uf, "$", sep=""), ENTE)) %>%
+  distinct() %>%
+  spread(key=competencia, value = entregou, fill = "-") %>%
+  select(- `<NA>`)  
+
+```
+
+
+```{r}
+kable(entrega_dipr)
+```
+
+O quadro acima nos fornece uma indicação de quais RPPS estão inadimplentes com a obrigação de encaminhamento do DIPR à SPrev. O quadro está ordenado por ordem alfabética, mas poderia ser ordenado por inadimplência, ou seja, RPPS com maior quantidade de inadimplência no período viriam primeiro.
+
+Caso seja necessário exportar os dados para uma planilha do excel:
+
+```{r,eval=FALSE}
+setwd("..\\dados-produzidos")
+write_xlsx(entrega_dipr, "entrega_dipr_MT.xlsx")
+```
+
+</br>
+
+## Segregação de Massas
+
+A base de dados do DIPR também nos fornece de imediato uma informação relevante: os RPPS com segregação de messas (dentre os que encaminharam o DIPR à SPrev/ME).
+
+Vamos identificar quais RPPS do Estado do Rio de Janeiro possuem segregação de massas. 
+
+```{r}
+UF <- "RJ"
+entes_segreg <- dipr %>%
+                  mutate(periodo = as.Date(paste("01", competencia, sep = "/"), "%d/%b/%Y")) %>%        
+                  group_by(ente) %>%
+                  filter(uf == UF, periodo == max(periodo, na.rm = TRUE), plano_segreg == "Financeiro") %>%
+                  select(ente) %>%
+                  ungroup() %>%
+                  arrange(ente)
+
+```
+
+No código acima olhamos o valor da variável `plano_segreg` no mês mais recente disponível na base de dados para cada Ente .
+
+Os RPPS com segregação de massas no ERJ são os seguintes:
+
+```{r}
+kable(entes_segreg)
+```
+
+
+</br>
+
+## Recebimento dos parcelamentos
+
+O site da SPrev/ME disponibiliza um conjunto de dados específico para parcelamentos (`PARCELAMENTOS_30042019.xlsx`) contendo bastante informação sobre os **Termos de Parcelamento de Dívidas** dos Entes.
+
+O DIPR fornece informações sobre o montante dos valores recebidos pela Unidade Gestora do RPPS oriundos de parcelamentos. Estes dados estão disponíveis nas variáveis `parcelamentos` e `ing_parc`. 
+
+Neste tópico nosso objetivo será tentar verificar se o Ente está pagando seus parcelamentos. Não é possivel, apenas com esses dados, verificar se **todos** os parcelamentos estão sendo pagos, se estão sendo pagos com os acréscimos legais, etc. Mas combinando os dados do DIPR com os dados do arquivo `PARCELAMENTOS_30042019.xlsx` talvez seja possível obter informações interessantes. Mas por ora vamos ficar apenas com os dados disponíveis no DIPR.
+
+Vamos antes identificar no RJ quais RPPS receberam recursos oriundos de parcelamentos no período.
+
+```{r}
+UF <- "RJ"
+parcel_dipr <- dipr %>%
+  filter(uf == UF, !is.na(parcelamentos) | !is.na(ing_parc)) %>%
+  select(ente, competencia, plano_segreg, parcelamentos, ing_parc)
+  
+  
+```
+
+Vamos olhar o município de Pinheiral no RJ ver como está o recebimento de parcelamentos:
+
+```{r}
+ENTE <- "PINHEIRAL - RJ"
+
+dipr_parcelamentos <- parcel_dipr %>%
+  filter(ente == ENTE)
+
+```
+
+Vamos dar uma olhada no conjunto de dados:
+
+```{r}
+kable(dipr_parcelamentos)
+
+```
+
+A base do DIPR contém informações sobre parcelamentos em duas variáveis: `parcelamentos`e `ing_parc`. Assim foram selecionadas as duas apenas para efeito de comparação, ou seja, ver se os dois valores estão "batendo".
+
+```{r}
+# Gráfico dos dados acima.
+#-------------------------
+dipr_parcelamentos %>%           
+  mutate(competencia = as.Date(paste("01", competencia, sep = "/"), "%d/%B/%Y")) %>%
+  ggplot(aes(x=competencia, y=parcelamentos)) +
+  geom_line() +
+  geom_point(size=2) +
+  facet_wrap(~ plano_segreg)
+  
+```
+
+
+</br>
+
+## Recebimento das contribuições
+
+Neste tópico nosso objetivo é verificar se as contribuições devidas estão sendo recebidas pelo RPPS. Vamos dar uma olhada no município de **Porto Alegre** no **RS**.
+
+```{r}
+ENTE <- "PORTO ALEGRE - RS" 
+teste <- function(x){!all(is.na(x))}
+
+dipr_contribuicoes <- dipr %>%
+  filter(ente == ENTE) %>%
+  select(competencia, plano_segreg, ct_pat_serv, ct_pat_serv_ug, ct_pat_apo, ct_pat_pen, ct_serv, ct_apo, ct_pen) %>%
+  select_if(teste) %>% 
+  gather(key=tipo, value=contribuicao, -competencia, -plano_segreg) 
+
+```
+
+Vamos dar uma olhada nos dados:
+
+```{r}
+kable(dipr_contribuicoes)
+
+```
+
+
+```{r, fig.width=10}
+# Gráfico dos dados acima.
+dipr_contribuicoes %>%
+  mutate(competencia = as.Date(paste("01", competencia, sep = "/"), "%d/%B/%Y")) %>%
+  ggplot(aes(x=competencia, y=contribuicao, group=tipo, color=tipo)) +
+  geom_line() +
+  geom_point(size=2) +
+  facet_wrap(~ plano_segreg)
+
+```
+
+
+
+</br>
+
+## Evolução das Receitas e Despesas
+
+Neste tópico nosso objetivo é apenas visualizar como as receitas e despesas do RPPS estão evoluindo no tempo. Para isso, vamos utilizar como exemplo o RPPS de Manaus, AM. As variáveis que nos interessam são: `total_receita` e `total_despesa`.
+
+
+```{r}
+ENTE <- "MANAUS - AM"
+dipr %>%
+  filter(ente == ENTE) %>%
+  select(ente, competencia, plano_segreg, total_receita, total_despesa) %>%
+  mutate(competencia = as.Date(paste("01", competencia, sep = "/"), "%d/%B/%Y")) %>%
+  ggplot(aes(x=competencia, y=total_despesa)) +
+  geom_line() +
+  geom_point() +
+  facet_wrap(~ plano_segreg)
+
+```
+
+Para a receita o código é o mesmo:
+
+```{r}
+dipr %>%
+  filter(ente == ENTE) %>%
+  select(ente, competencia, plano_segreg, total_receita, total_despesa) %>%
+  mutate(competencia = as.Date(paste("01", competencia, sep = "/"), "%d/%B/%Y")) %>%
+  ggplot(aes(x=competencia, y=total_receita)) +
+  geom_line() +
+  geom_point() +
+  facet_wrap(~ plano_segreg)
+```
+
+
+
+</br>
+
+## Quantidade de Beneficiários
+
+Outra análise que pode ser de interesse seria avaliar como a quantidade de beneficiários está evoluindo ao longo do tempo. Informações sobre a quantidade de beneficiários estão contidas nas variáveis `nb_serv`, `nb_apos`, `nb_pen` e `nb_dep`.
+
+Se quisermos incluir dados dos **militares**, teremos que considerar as variáveis `nbmil_ativos`, `nbmil_reserva`, 	`nbmil_pen` e `nbmil_dep`.
+
+No gráfico a seguir vamos ver a evolução da quantidade de servidores ativos (`nb_serv`):
+
+```{r}
+ENTE <- "JAPERI - RJ" 
+
+dipr %>%
+  filter(ente == ENTE) %>%
+  select(competencia, plano_segreg, nb_serv, nb_apos, nb_pen, nb_dep) %>%
+  mutate(competencia = as.Date(paste("01", competencia, sep = "/"), "%d/%B/%Y")) %>%
+  ggplot(aes(x=competencia, y=nb_serv, group=1)) +
+    geom_line() +
+    geom_point() +
+  facet_wrap(~ plano_segreg)
+
+```
+
+
+</br>
+
+## COMPREV
+
+Neste tópico nosso objetivo será obter uma relação dos RPPS de uma UF com os valores do COMPREV recebido. Uma análise adicional seria verificar se todos os RPPS que informaram ter recebido COMPREV estão regulares com o CRP.
+
+Esta verificação pode auxiliar na Diretriz Atricon que oriente os TCs a verificar:
+
+" _g) se os regimes próprios têm viabilizado o exercício do direito de compensação financeira;_""  
+
+Na base do DIPR os valores recebidos relativos ao COMPREV constam da variável `ing_comprev`.
+
+Vamos olhar os RPPS do Estado do Paraná (PR). No código abaixo os valores do COMPREV do plano financeiro e previdenciário serão caso o RPPS escolhido possua segregação de massas. 
+
+```{r}
+UF <- "PR"
+
+recebe_comprev <- dipr %>%
+  filter(uf == UF) %>%
+  select(ente, competencia, ing_comprev) %>%
+  mutate(competencia = as.Date(paste("01", competencia, sep="/"), "%d/%b/%Y")) %>%
+  group_by(ente, competencia) %>%
+  summarise(comprev = sum(ing_comprev, na.rm=TRUE)) %>%
+  spread(key=competencia, value=comprev)
+
+
+```
+
+Vamos olhar os dados. Como são muitos RPPS, vamos ver os dados dos 10 primeiros.
+
+```{r}
+kable(head(recebe_comprev, 10))
+```
+
+Vamos excluir os Entes que cujos valores de COMPREV estejam zerados em todos os meses ou possuam NA.
+
+```{r}
+recebe_comprev2 <- recebe_comprev %>%
+  ungroup() %>%
+  mutate(flag = apply(.[, -1], 1, function(x) all(x == 0 | is.na(x)))) %>%
+  filter(!flag) %>%
+  select(-flag)
+
+
+```
+
+```{r}
+kable(recebe_comprev2)
+```
+
+Se quisermos exportar os dados:
+
+```{r, eval=FALSE}
+setwd("..\\dados-produzidos")
+write_xlsx(recebe_comprev2, "ReceitaCOMPREV-PR.xlsx")
+```
+
+Se quisermos ver a evolução temporal da receita de COMPREV de um determinado RPPS, por exemplo Alto Paraná - PR, podermos fazer da seguinte forma:
+
+```{r}
+ENTE <- "ALTO PARANA - PR"
+
+dipr %>%
+  filter(ente == ENTE) %>%
+  select(ente, competencia, ing_comprev) %>%
+  mutate(competencia = as.Date(paste("01", competencia, sep="/"), "%d/%b/%Y")) %>%
+  group_by(ente, competencia) %>%
+  summarise(comprev = sum(ing_comprev, na.rm=TRUE)) %>%
+  ggplot(aes(x=competencia, y=comprev, group=1)) +
+  geom_line() +
+  geom_point()
+
+```
+
+
+</br>
+
+## Repasse de contribuições
+
+Neste tópico nosso objetivo é tentar realizar algum monitoramento do efetivo repasse das contribuições devidas pelos diversos órgãos de um Ente bem como as contribuições dos beneficiários (servidores ativos e inativos).
+
+A base de dados do DIPR não contém informações sobre o valor a ser repassado ao RPPS. Para que seja possível obter esse valor vamos tentar utilizar a base de dados `DADOS-GERAIS-Aliquotas-de-Contribuicao-Praticadas.csv` que contém as alíquotas de contribuição dos RPPS e aplicá-las à variável às variáveis que indicam a base de cálculo das contribuições patronais: `bc_pat_serv`, `bc_pat_serv_ug`, `bc_pat_apo`, `bc_pat_pen` e dos servidores: `bc_serv`, `bc_apo`, `bc_pen`.     
+
+Vamos iniciar por fazer a importação da base de dados de alíquotas.
+
+```{r}
+#setwd("..\\dados")
+aliquotas <- read_csv2("DADOS-GERAIS-Aliquotas-de-Contribuicao-Praticadas.csv", na="NULL")
+```
+
+Vamos fazer uma inspeção na base de dados para verificar quais variáveis estão presentes na mesma:
+
+```{r}
+kable(head(aliquotas))
+```
+
+
+A base de dados informa a alíquota de contribuição para cada Ente por tipo de plano (previdenciário e financeiro) para o Ente, os servidores ativos, os aposentados e os pensionistas. No caso de haver alíquota suplementar existe ainda o Ente-suplementar. A base de dados informa ainda a data início e de fim de vigência da alíquota no caso de alíquotas suplementares.
+
+Vamos realizar fazer algumas modificações na base de dados.
+
+```{r}
+aliquotas <- aliquotas %>%
+                rename(plano_segreg = `Plano de Segregação`,
+                       sujeito_passivo = `Sujeito Passivo`,
+                       inic_vigencia = `Início de Vigência`,
+                       fim_vigencia = `Fim de Vigência`) %>%
+                mutate(Aliquota = as.numeric(Aliquota),
+                       inic_vigencia  = ymd(str_sub(inic_vigencia, 1, 10)),
+                       fim_vigencia   = ymd(str_sub(fim_vigencia, 1, 10)))
+
+```
+
+
+Da base de dados do DIPR vamos selecionar apenas as colunas que precisaremos:
+
+```{r}
+diprVlrDev <- dipr %>%
+                select(ente, uf, competencia, plano_segreg, starts_with("bc_pat_"), starts_with("ct_")) %>%
+                mutate(competencia = as.Date(paste("01/", competencia, sep=""), "%d/%b/%Y")) %>%
+                gather(bc_pat_serv:ct_pen, ,key="tipo", value = "valor")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Gráfico da base de cálculo com valor recebido.
+```{r}
+dipr %>%
+  filter(uf == "RJ", ente == "Angra dos Reis") %>%
+  ggplot(aes(x=bc_pat_serv, y=ct_pat_serv)) +
+  geom_point() +
+  facet_wrap( ~ plano_segreg)
+```
+
+
+</br>
+
+Como a quantidade de variáveis na base do DIPR é bem grande (91 variáveis) as possibilidades de análise são muitas, mas o código aqui apresentado já dá uma boa ideia de como utilizar esses dados.

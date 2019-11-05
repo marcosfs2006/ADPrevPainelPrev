@@ -1,0 +1,30 @@
+# Microdados CVM
+
+<!--
+Tutorial a elaborar...
+-->
+
+http://dados.cvm.gov.br/
+http://dados.cvm.gov.br/dataset?tags=fundos+de+investimento
+
+Fundos de Investimento: Documentos: Informe Diário
+Fundos de Investimento: Informação Cadastral
+Fundos de Investimento: Documentos: Extrato das Informações
+Fundos de Investimento: Documentos: Eventuais, DFs e Demonstrativos Trimestrais
+Fundos de Investimento: Documentos: Composição e Diversificação das Aplicações
+Fundos de Investimento: Documentos: Balancete
+Emissores
+
+
+
+
+## [Informes Diários]()
+
+http://dados.cvm.gov.br/dados/FI/DOC/INF_DIARIO/DADOS/inf_diario_fi_201908.csv
+http://dados.cvm.gov.br/dados/FI/DOC/INF_DIARIO/DADOS/inf_diario_fi_201909.csv
+
+</br>
+
+## [Informação Cadastral](http://dados.cvm.gov.br/dataset/fi-cad)
+
+http://dados.cvm.gov.br/dados/FI/CAD/DADOS/inf_cadastral_fi_20190920.csv

@@ -1,0 +1,58 @@
+</br>
+
+# ISP - Indicador de Situação Previdenciária
+
+Nosso objetivo neste tópico é mostrar algumas possibilidades de análise do [Indicador de Situação Previdenciária - ISP](http://www.previdencia.gov.br/regimes-proprios/indicador-de-situacao-previdenciaria/). 
+
+Em particular uma análise possível é verificar a posiçao do indicador de um Ente em relação aos demais Entes do Estado. 
+
+A importação dos dados pode ser feita da seguinte forma:
+
+```{r}
+setwd("..\\dados")
+isp <- read_excel("RESULTADO-ISP-2018.01.xlsx")
+isp <- isp[, -c(31, 32, 33, 34)]
+names(isp) <- c("ENTE",    "UF", "REGIAO", "GRUPO", "ESCRITURA",	"APLICFIN",
+                "CONTRIB", "COBSERVPUB", "CONCBENEF",	"EQUILATUAR",	"PARTSEG",	"PARCELTEMP",
+                "REGRAS",	 "UTILRECPREV",	"CONF",	"CLASSIF_CONF",	"ENDIVID",	"SOLVFIN",
+                "RAZAOAI", "COMPROMATUAR",	"SOLVATUAR",	"EQUIL",	"CLASSIF_EQUIL",
+                "DRAA",    "DIPR",	"DPIN",	"DAIR",	"TRANSP",	"CLASSIF_TRANSP",	"ISP201801")
+
+isp$ENTE <- gsub("^GOVERNO DO ", "", isp$ENTE)
+
+```
+
+Feita a importação dos dados, algumas análises com esse conjunto de dados são possíveis e serão aqui acrescidas à medida que o tempo permitir. 
+
+Podemos visualizar o indicador de um determinado RPPS em comparação com os dos demais RPPS de um mesmo Estado, ou comparar o indicador de um RPPS com os RPPS do mesmo porte.
+
+Por exemplo, vamos ver como o RPPS do municipio de Campos dos Goytacazes no ERJ se compara com os demais RPPS do Estado do RJ com relação ao ISP:
+
+```{r, fig.align="center", fig.width=3, fig.height=4}
+ESTADO <- "RJ"
+RPPS <- "CAMPOS DOS GOYTACAZES - RJ"
+
+isp %>%
+  filter(UF == ESTADO) %>%
+  ggplot(aes(x=as.factor(UF), y=ISP201801)) +
+  geom_boxplot() +
+  labs(x="", y = "ISP") +
+  geom_dotplot(binaxis = "y", stackdir="center", fill="lightgray", color="lightgray") +
+  geom_point(y=isp$ISP201801[isp$ENTE == RPPS], color="blue", size=3, shape=8) +
+  theme_bw()
+
+```
+
+Vê que o RPPS em questão está no quartil inferior da distribuição (marcado no gráfico com um asterisco azul). 
+
+Uma forma interativa de visualização do ISP pode ser obtida no seguinte site:<https://marcosfs2006.shinyapps.io/Visualiza_ISP/> 
+
+A Resolução Atricon 5/2018 orienta no sentido de se utilizar como referência o Indicador de Situação Previdenciária para efeito de definir os RPPS a serem avaliados nas Contas de Governo. (Item 24, m, III)
+
+Este pode ser um ponto a ser desenvolvido posteriormente.
+
+</br>
+
+
+
+

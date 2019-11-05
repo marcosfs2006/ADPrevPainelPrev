@@ -1,0 +1,228 @@
+</br>
+
+# CRP
+
+Neste tópico nosso objetivo é mostrar algumas possibilidades de análise em relação aos dados do [Certificados de Regularidade Previdenciária - CRP](http://www.previdencia.gov.br/perguntas-frequentes/v-certificado-de-regularidade-previdenciaria/) contidos no arquivo `CRP Emitido.csv` disponibilizado no site da SPrev.
+
+O link para _download_é <http://sa.previdencia.gov.br/site/2019/08/CRP-Emitido.zip>
+
+A primeira etapa, como sempre, é realizar a importação dos dados e realizar o pré-processamento dos mesmos.
+
+A importação é feita da seguinte forma:
+
+```{r}
+crp <- read_csv2("./dados/CRP Emitido.csv")
+```
+
+Vamos inspecionar a base de dados para a conhecermos um pouco melhor:
+
+```{r}
+kable(head(crp))
+```
+
+
+A base nos fornece algumas informações sobre o CRP e compreende tanto os Regimes Próprios como o Regime Geral. Vamos nos restringir aos Regimes Próprios:
+
+```{r}
+crp <- filter(crp, REGIME == "RPPS")
+```
+ 
+
+Também é possível ver que o arquivo contém, para cada Ente, um histórico dos CRP emitidos para os mesmos. Vamos obter, para cada ente, o CRP mais recente emitido constante da base de dados:
+
+```{r}
+crp <- crp %>%
+          mutate(`DATA DE EMISSÃO` = dmy(`DATA DE EMISSÃO`),
+                 `DATA DE VALIDADE`= dmy(`DATA DE VALIDADE`)) %>%
+          group_by(UF, ENTE) %>%
+          filter(`DATA DE EMISSÃO` == max(`DATA DE EMISSÃO`))
+```
+
+Vamos inspecionar novamente a base de dados.
+
+```{r}
+kable(head(crp))
+```
+
+Antes de prosseguirmos, devemos excluir as duplicidades existentes na base de dados. Por exemplo, o Ente "Governo do Estado de Roraima" aparece com o mesmo CRP 4 vezes na base de dados:
+
+```{r}
+filter(crp, ENTE == "Governo do Estado de Roraima") %>%
+  kable()
+```
+
+
+Vamos excluir as duplicidades:
+
+```{r}
+crp <- crp %>%
+          filter(!duplicated(`NR CRP`))
+
+```
+
+Se quisermos exportar a base de dados para uma planilha do Excel podemos fazer da seguinte forma:
+
+```{r, eval=FALSE}
+setwd("..\\dados-produzidos")
+write_xlxs(crp, file = "crp_DtRef2019-08.xlxs")
+
+```
+
+```{r, eval=FALSE,echo=FALSE}
+setwd("..\\dados-produzidos")
+saveRDS(crp, file="crp_DtRef2019-08.Rds")
+
+```
+
+
+Agora estamos em condições de responder a algumas questões: Quantos Entes com CRP vencido existe em cada Estado? Quanto isso representa do total de RPPS existentes no Estado?
+
+```{r}
+crp %>%
+  group_by(UF) %>%
+  summarise(QtdRPPS = n(),
+            QtdRPPS_CRPVencido = sum(`SITUAÇÃO DO CRP` == "VENCIDO"),
+            PctRPPS_CRPVencido = round(QtdRPPS_CRPVencido / QtdRPPS * 100, 2)) %>%
+  arrange(desc(PctRPPS_CRPVencido)) %>% 
+  kable()
+
+```
+
+
+Em boa parte dos estados tem-se um elevado percentual de Entes com o CRP vencido.
+
+Também poderíamos incluir na tabela acima a quantidade de Entes com CRP obtido pela via judicial e qual o percentual em relação ao total de Entes no Estado.
+
+```{r}
+crp %>%
+  group_by(UF) %>%
+  summarise(QtdRPPS = n(),
+            QtdRPPS_CRPVencido  = sum(`SITUAÇÃO DO CRP` == "VENCIDO"),
+            PctRPPS_CRPVencido  = round(QtdRPPS_CRPVencido / QtdRPPS * 100, 2),
+            QtdRPPS_CRPJudicial = sum(`CRP JUDICIAL` == "SIM"),
+            PctRPPS_CRPJudicial = round(QtdRPPS_CRPJudicial / QtdRPPS * 100, 2)) %>%
+  arrange(desc(PctRPPS_CRPVencido)) %>% 
+  kable()
+```
+
+Na tabela acima apresenta-se apenas um resumo quantitativo mostrando a quantidade de Entes com CRP vencido ou judicial.
+
+A identificação dos Entes, em uma Unidade da Federação, com CRP vencido ou com CRP obtido pela via judicial pode ser feita da seguinte forma: 
+
+</br>
+
+**CRP VENCIDO**
+
+```{r}
+UF <- "RJ"
+crp %>%
+  ungroup() %>%
+  filter(UF == "RJ", `SITUAÇÃO DO CRP` == "VENCIDO") %>%
+  select(ENTE, `NR CRP`, `DATA DE EMISSÃO`, `DATA DE VALIDADE`) %>%
+  arrange(desc(`DATA DE VALIDADE`)) %>%
+  kable()
+```
+
+</br>
+
+**CRP VÁLIDO - JUDICIAL**
+
+```{r}
+UF <- "RJ"
+crp %>%
+  ungroup() %>%
+  filter(UF == "RJ", `CRP JUDICIAL` == "SIM", `SITUAÇÃO DO CRP` == "VÁLIDO") %>%
+  select(ENTE, `NR CRP`, `DATA DE EMISSÃO`, `DATA DE VALIDADE`) %>%
+  arrange(desc(`DATA DE VALIDADE`)) %>%
+  kable()
+```
+
+
+Vamos criar uma nova coluna na base de dados contendo a quantidade de dias decorridos da data de validade do CRP até a data de hoje (elaboração desse documento).
+
+```{r}
+crp <- crp %>%
+  mutate(QtdDias = as.numeric(difftime(as.POSIXct(Sys.Date()), `DATA DE VALIDADE`, units = "days")))
+```
+
+Qual o Ente com o CRP vencido a mais tempo?
+
+```{r}
+crp %>%
+  filter(QtdDias == max(crp$QtdDias)) %>%
+  select(UF, ENTE, `DATA DE EMISSÃO`, `DATA DE VALIDADE`, QtdDias) %>%
+  kable(caption = paste("Data de Referência: ", format(Sys.Date(), "%d.%m.%Y") , sep = ""))
+```
+
+
+Agora criar uma nova coluna na base de dados contendo  um escalonamento da variável `QtdDias` de dados de forma a classificar os Entes em função da quantidade de dias em que os CRP estão vencidos. Por exemplo, podemos adotar a seguinte classificação: "a vencer", "1 a 30 dias", "31 a 60 dias", "61 a 90 dias", "91 a 180 dias", "181 a 365 dias", "1 a 5 anos" e "mais de 5 anos".
+
+Para fazer esse escalonamento, vamos criar uma nova coluna na base de dados.
+
+```{r}
+crp <- crp %>%
+        mutate(categoria = cut(QtdDias,
+                               breaks =c(-Inf, 0, 30, 60, 90, 180, 365, 5*365, Inf) ,
+                               labels = c("a vencer",
+                                          "1 a 30 dias",
+                                          "31 a 60 dias",
+                                          "61 a 90 dias",
+                                          "91 a 180 dias",
+                                          "181 a 365 dias",
+                                          "1 a 5 anos",
+                                          "mais de 5 anos")))
+```
+
+Agora podemos fazer um gráfico que mostre a frequência de Entes em cada uma dessas categorias.
+
+```{r}
+crp %>%
+  group_by(categoria) %>%
+  summarise(frequencia = n()) %>%
+  ggplot(aes(x=categoria, y=frequencia)) +
+    geom_bar(stat="identity", fill="orange") +
+    geom_text(aes(label=frequencia), color="blue", vjust = 0, hjust=1, size=4) +
+    coord_flip()
+
+```
+
+Também é possível fazer o mesmo gráfico para os Entes de um mesmo estado ou mesmo para os Entes que estão em um mesmo grupo conforme definido pels SPrev.
+
+Vamos ver como está situação dos RPPS do Estado do Rio de Janeiro:
+
+```{r}
+Estado <- "RJ"
+
+crp %>%
+  filter(UF == Estado) %>%
+  group_by(categoria) %>%
+  summarise(frequencia = n()) %>%
+  ggplot(aes(x=categoria, y=frequencia)) +
+    geom_bar(stat="identity", fill="orange") +
+    geom_text(aes(label=frequencia), color="blue", vjust = 0, hjust=1, size=4) +
+    coord_flip()
+
+```
+
+Quais são os Entes do RJ com CRP vencido a mais de 5 anos?
+
+```{r}
+filter(crp, UF == Estado, categoria == "mais de 5 anos") %>% 
+  kable()
+```
+
+Infelizmente a base de dados não possui informações sobre os critérios do CRP. Essas seriam informações interessantes de constar da base de dados.
+
+
+
+
+
+
+
+</br>
+
+<!--
+
+Qual a distribuição da quantidade de dias vencidos? Por grupo?
+
+-->

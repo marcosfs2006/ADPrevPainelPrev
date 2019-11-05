@@ -1,0 +1,95 @@
+</br>
+
+# Parcelamentos de Débitos
+
+O objetivo da análise é identificar os RPPS com parcelamentos ativos, a quantidade de parcelamentos ativos, o valor consolidado dos parcelamentos e o saldo a pagar.
+
+Para isso, será utilizado o arquivo `PARCELAMENTOS_30042019.xlsx` disponibilizado pela SPrev/ME.
+
+
+**1. Importação dos dados:**
+
+Como de costume, o prmeiro passo é realizar a importação da base de dados.
+
+```{r}
+# Entes com parcelamentos
+#-------------------------------------------------------------------------------
+setwd("..\\dados")
+parcel <- read_excel("PARCELAMENTOS_30042019.xlsx", skip = 3, col_names = FALSE)
+names(parcel) <- c("ente", "uf", "tipo", "situacao", "num_acordo", "rubrica",
+                   "lei", "dt_consol", "dt_assin", "dt_venc_1a", "compet_ini",
+                   "compet_fin", "vlr_consolid", "qtd_parc", "vlr_parc_ini",
+                   "sd_estim_satualiz", "sd_estim_catualiz", "comp_indice",
+                   "comp_tipo_juros", "comp_txjuros", "comp_multa", "parcvinc_indice",
+                   "parcvinc_tipojuros", "parcvinc_txjuros", "parcvinc_multa",
+                   "parcatraso_indice", "parcatraso_tipojuros",
+                   "parcatraso_txjuros", "parcatraso_multa")
+
+```
+
+Vamos dar uma olhada na base de dados:
+
+```{r}
+kable(head(parcel))
+```
+
+Feita a importação, quase sempre será necessário realizar algum pré-processamento da base de dados. Aqui será necessário converter algumas variáveis para o formato numérico. Especificamente vamos converter as variáveis `vlr_consolid` e `sd_estim_satualiz`. Também faremos uma pequena redução no nome de alguns Entes.
+
+```{r}
+# Converter dados para o formato numérico
+
+convNum <- function(x){
+  as.numeric(gsub(",", ".", gsub("\\.", "", x)))
+}
+
+colunas_converter <- c("vlr_consolid", "sd_estim_satualiz", "sd_estim_catualiz", "vlr_parc_ini")
+parcel[, colunas_converter] <- sapply(parcel[, colunas_converter], convNum)
+
+# Limpar os nomes dos entes:
+parcel$ente <- gsub("^Governo do ", "", parcel$ente)
+```
+
+Vamos salvar a base no formato `.Rds` do R para uso posterior:
+
+```{r, eval=FALSE}
+setwd("..\\dados-produzidos")
+saveRDS(parcel, file="Parcelamentos_DtGer30042019.Rds")
+
+```
+
+**2. Parcelamentos ativos**
+
+A variável `situacao` nos dá uma indicação da situação do parcelamento, muito provavelmente na data da geração da base de dados. Os valores possiveis dessa variável são:
+
+```{r}
+unique(parcel$situacao)
+```
+
+para servos conservadores em relação o montante de dívida oriunda de parcelamentos que os Entes possuem com seus RPPS, vamos retirar da base os acordos de parcelamento quitados e não aceitos.
+
+```{r}
+parcel <- parcel %>% 
+            filter(!(situacao %in% c("Quitado", "Não aceito")))
+```
+
+
+**3. Agregação dos parcelamentos**
+
+Vamos a seguir realizar uma agregação dos dados com vistas a mostrar, em relação aos Entes qual a situação em relação a quantidade e valor dos parcelamentos.
+  
+```{r}
+tab_parcelamentos <- parcel %>%
+  group_by(ente) %>%
+  summarise(qtd_acordos = n(),
+            valor_consolidado = sum(vlr_consolid, na.rm=TRUE),
+            sd_sem_atualiz = sum(sd_estim_satualiz, na.rm = TRUE),
+            percentual = round(sd_sem_atualiz / valor_consolidado * 100, 2)) %>%
+  arrange(desc(valor_consolidado))
+
+```
+
+```{r}
+kable(head(tab_parcelamentos))
+```
+
+</br>

@@ -1,0 +1,103 @@
+# ANEXO I - Acesso às Bases de Dados da SPrev
+
+A SPrev disponibiliza um conjunto de dados relacionados aos RPPS na página <http://www.previdencia.gov.br/dados-abertos/estatisticas-e-informacoes-dos-rpps/>.
+
+Vamos mostrar, a seguir, como importar os dados disponibilizados.
+
+A primeira coisa a fazermos é importar os pacotes necessários:
+
+```{r}
+library(xml2)
+library(rvest)
+library(readr)
+```
+
+Vamos agora identificar na página as URL para realizarmos o _download_ dos dados e posterior importação dos mesmos.
+
+```{r}
+
+url <- "http://www.previdencia.gov.br/dados-abertos/estatisticas-e-informacoes-dos-rpps/"
+pg <- read_html(url)
+
+# Extrai os endereços dos arquivos
+#---------------------------------
+arquivos <- html_attr(html_nodes(pg, "a"), "href")
+arquivos <- arquivos[grepl("^http://sa\\.", arquivos)]
+```
+
+Vamos ver o conteúdo extraído da página:
+
+```{r}
+arquivos
+```
+
+Acima, estão elencadas as URL contendo as bases de dados disponbilizadas pela SPRev.
+
+Como pode ser visto, os dados estão em diferentes formatos: `.csv`, `.zip`, `.xlsx`.Aparentemente a SPrev classifica os dados da seguinte forma: `DADOS GERAIS`, `CRP`, `DAIR`, `DIPR`, `DRAA` e `PARCELAMENTOS`.
+
+Identificada a URL do arquivo cujos dados queremos importar, o passo seguinte é baixar o arquivo e importar seu conteúdo. Vamos exemplificar com um arquivo zipado, cujo processo envolve etapas adicionais de descompactarção do arquivo. A importação dos demais formatos é mais direta.
+
+O código a seguir baixa o arquivo `DAIR-2019-27082019.zip` e inspeciona seu conteúdo.
+
+```{r}
+tmp <- tempfile(pattern = "dados_rpps", fileext = ".zip")
+
+download.file("http://sa.previdencia.gov.br/site/2019/08/DAIR-2019-27082019.zip",
+              destfile=tmp)
+```
+
+
+```{r}
+unzip(zipfile=tmp , list = TRUE)
+```
+
+O arquivo em questão possui dois arquivos `.csv`. Vamos importar o conteúdo do arquivo `DAIR-2019-Carteira.csv`
+
+```{r}
+getwd() # Local onde o arquivo vai ser descompactado
+unzip(zipfile=tmp , files ="DAIR-2019-Carteira.csv", exdir = getwd())
+
+```
+
+Agora vamos importar o conjunto de dados
+
+```{r}
+dair2019 <- read_csv2("DAIR-2019-Carteira.csv")
+```
+
+Vamos inspecionar os dados:
+
+```{r}
+knitr::kable(head(dair2019))
+```
+
+Vamos remover os arquivos baixados:
+
+```{r}
+unlink(tmp) 
+unlink("DAIR-2019-Carteira.csv")
+```
+
+Ok. Dados importados.
+
+
+
+<!--
+
+# Web Scrping Tutorials in R
+https://towardsdatascience.com/web-scraping-tutorial-in-r-5e71fd107f32
+http://www.storybench.org/scraping-html-tables-and-downloading-files-with-r/
+
+http://www.storybench.org/getting-started-r-rstudio-notebooks/
+http://www.storybench.org/how-to-manipulate-data-with-dplyr-in-r/
+http://www.storybench.org/getting-started-with-tidyverse-in-r/
+
+https://stackoverflow.com/questions/3746256/extract-links-from-webpage-using-r
+https://gist.github.com/paulrougieux/e1ee769577b40cd9ed9db7f75e9a2cc2
+
+https://datajournalism.com/read/handbook/one/introduction/what-is-data-journalism
+https://datajournalism.com/watch/python-for-journalists
+https://gijn.org/data-journalism/
+https://datajournalism.com/read/handbook/two
+
+-->

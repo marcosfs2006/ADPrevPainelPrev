@@ -1,0 +1,19 @@
+</br>
+
+# Introdução
+
+O objetivo deste documento é mostrar como os dados previdenciários disponibilizados pela Secretaria de Previdência do Ministério da Economia (SPrev/ME) podem ser utilizados para ajudar no acompanhamento da gestão dos RPPS.
+
+Para alcançar esse objetivo vamos apresentar os _scripts_ elaborados em [R](https://www.r-project.org/) para que outros interessados possam, também, realizar as análises indicadas e apresentar novas contribuições.
+
+Diversas bases de dados e relatórios são disponbilizados pela SPrev/ME em seu site (`<http://www.previdencia.gov.br/dados-abertos/estatisticas-e-informacoes-dos-rpps/>`) e já se sabe há muito tempo que o principal problema atualmente não é tanto a disponibilidade de dados mas a **capacidade de análise dos mesmos**.
+
+Acho que podemos falar de **Análise de Dados Previdenciários** para designar uma área de conhecimento a ser desenvolvida nos órgãos encarregados da supervisão e controle dos RPPS com o objetivo de auxiliar na execução dessa atividade.
+
+Conhecer esses dados, suas limitações, inconsistências, analisá-los e enriquecê-los com outros dados e propor melhorias constituem o escopo dessa área. 
+
+Nos tópicos a seguir vamos mostrar algumas análises possíveis com os dados disponibilizados. A ideia é que as análises descritas neste documento sejam  incluídas no painel de dados previdenciários (**ainda em elaboração**) disponível no link <https://marcosfs2006.shinyapps.io/rpps-painel/> elaborado com os dados disponibilizados pela SPrev/ME.
+
+Como esse painel está hospedado em uma opção gratuita de um serviço de hospedagem de aplicativos `shiny` (<https://www.shinyapps.io/>) existem algumas restrições quanto ao tempo de uso do aplicativo e provavelmente quanto ao espaço para armazenamento das bases de dados necessárias para as análises.  
+
+</br>

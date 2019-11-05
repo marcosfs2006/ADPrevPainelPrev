@@ -1,0 +1,388 @@
+</br>
+
+# Fluxo Atuarial
+
+Os fluxos atuariais são objeto do Capítulo VII da Portaria 464 de 19.11.2018. Um primeiro aspecto importante a ser considerado é que os mesmos **são parte integrante da avaliação atuarial** (art. 10).
+
+Estes fluxos tem por objetivo evidenciar as projeções de **todas** as receitas e despesas do RPPS.  Sua estrutura deverá seguir modelos aprovados pela Secretaria de Previdência.
+
+Os modelos do fluxo atuarial e orientações quanto ao preenchimento dos mesmos podem ser obtidos nos seguintes links:
+
+Modelos de planilhas:
+http://sa.previdencia.gov.br/site/2015/04/Fluxos-atuariais-Para-o-site-em-abril_2015_.zip  
+
+Instruções de preenchimento dos fluxos atuariais: 
+http://sa.previdencia.gov.br/site/2015/04/2015-_Instru%C3%A7%C3%B5es-de-Preenchimento-dos-Fluxos-Atuariais.xlsx   
+
+Também de interesse são as orientações contidas no documento **INSTRUÇÕES GERAIS PARA DOWNLOAD, PREPARAÇÃO E TRANSMISSÃO DOS FLUXOS ATUARIAIS** que pode ser baixado no seguinte link: http://sa.previdencia.gov.br/site/2015/01/Instru%C3%A7%C3%B5es-gerais-para-download-prepara%C3%A7%C3%A3o-e-transmiss%C3%A3o-dos-Fluxos-Atuariais-23_jan_20151.pdf
+
+De acordo com este documento, "_os valores da linha 157 estão arredondados na casa dos centavos, de forma que os valores dessa linha devem corresponder aos valores informados na aba 'Resultados / Valores dos Compromissos' do DRAA_". 
+
+**É vedado fazer alterações na planilha**, de forma que a construção de rotinas de verificação automatizada das mesmas pode ser elaborada sem maiores complicadores.
+
+O _layout_ dos fluxos atuariais é apresentado a seguir:
+
+![](modelo_fluxo_atuarial.png)
+
+
+Para a execução deste procedimento, vamos utilizar os seguintes conjuntos de dados:
+
+* `2019_FLX_CIVIL_PREV_GA_cnpj - Com cálculo Duração.xlsx`    
+* `2019_FLX_CIVIL_PREV_GA_XXXXXXXXXXXXXX.csv`    
+* `Comparativo de Receita Despesa.csv`   
+
+Desses arquivos o primeiro e o terceiro estão disponíveis no site da SPrev. O segundo contém os dados do fluxo atuarial a ser examinado e não consta do site. Estes arquivos devem ser requisitados aos RPPS.
+
+O arquivo `2019_FLX_CIVIL_PREV_GA_cnpj - Com cálculo Duração.xlsx` será utilizado apenas para obtenção dos dos nomes das variáveis e os correspondentes códigos, o que pode ser feito da seguinte forma:
+
+```{r}
+# Gerar um data frame com os nomes e os códigos das varíaveis
+
+dicionario <- read_excel("2019_FLX_CIVIL_PREV_GA_cnpj - Com cálculo Duração.xlsx", sheet="Flx_CIVIL_PREV_GA", range="A7:BQ8")
+dicionario <- t(dicionario)
+dicionario <- data.frame(cod = dimnames(dicionario)[[1]], 
+                       descr = unname(dicionario[, 1]))
+dicionario$cod <- paste("V", dicionario$cod, sep = "")
+
+```
+
+Obtido o dicionário de dados, vamos dar uma olhada:
+
+```{r}
+# Mostrar o dicionário
+knitr::kable(dicionario)
+
+```
+
+
+</br>
+
+## Importação dos Dados
+
+Os fluxos atuariais não estão, atualmente, disponíveis para _download_ no site da Secretaria de Previdência do Ministério da Economia (SPrev/ME) nem no CADPREVWeb.
+
+Conseguimos um exemplar que usaremos para demonstrar como realizar sua análise usando o R. 
+
+Vamos definir uma pequena função que calculará a o **Fator de Desconto** (`V100401`) a partir das **Taxas de Juros** (`V100301`) informadas no fluxo atuarial.
+
+```{r}
+# Define uma função auxiliar para calcular as taxas de desconto
+#--------------------------------------------------------------
+calcula_tx_desconto <- function(i, postecipado = TRUE){
+  #--------------------
+  # i: Variável V100301
+  #--------------------
+  if(postecipado){
+    desconto <- 1 / (1 + i)
+  } else {
+    desconto <- c(1, 1 / (1 + i[2:length(i)])) 
+  }
+  round(cumprod(desconto), 5)
+}
+
+```
+
+Vamos iniciar a análise do fluxo atuarial importando os dados contidos no aquivo `2019_FLX_CIVIL_PREV_GA_XXXXXXXXXXXXXX.csv`.
+
+A importação do conteúdo do arquivo é feito da seguintes forma:
+
+```{r}
+# Importação dos dados
+setwd("..\\dados")
+flx_orig <- read.csv2("2019_FLX_CIVIL_PREV_GA_XXXXXXXXXXXXXX.csv", skip = 5, header=FALSE)
+
+# Coloca nomes nas colunas
+colfluxo <- c(100101, 100201, 100301, 100401, 109001,	111000,	111101,	111201, 111301,
+              111401,	112000,	119900,	121000,	121100,	121200,	121300,	121400,	121500,
+              121600,	121700,	122000, 122100,	122200,	122300,	122400,	122500,	122600,
+              122700,	123000,	123100,	123200,	123300,	123400, 124000,	124100,	124200,
+              124300,	124400,	124500,	129000,	130101,	130201,	139901,	190000,	210000,
+              211001,	212001,	213001,	214001,	215001,	219901,	220000,	221000,	222000,
+              223000,	224000,	225000, 226000,	227000,	229000,	239901,	240000,	250001,
+              260001,	270001,	280001,	290001)
+
+if(ncol(flx_orig) == 67){
+  names(flx_orig) <- paste("V", colfluxo, sep="")
+} else { 
+  names(flx_orig) <- paste("V", c(colfluxo, 310000,	320000), sep="")
+}
+
+```
+
+Ao colocar os nomes das colunas estamos considerando a possibilide do fluxo atuarial conter ou não as variáveis `V310000` e `V320000` necessárias para o cálculo da Duração do Passivo, requisito introduzido com a Portaria MF 464/18.
+
+Os comandos a seguir irão converter algumas variáveis numéricas que foram importadas como se fossem fatores.
+
+```{r}
+# Conversão de variáveis para o formato numérico
+numeros <- sapply(flx_orig, is.factor)
+flx_orig[,numeros] <- sapply(flx_orig[,numeros], function(x) as.numeric(gsub(",", ".", gsub("\\.", "", x))))
+              
+
+```
+
+
+Feita a importação dos dados, será necessário obter os dados contidos nas linhas denominadas ** `Totais de Controle:`** e **`Totais de Controle a Valor Atual:`** 	e posteriormente excluí-las da base de dados. Isso é feito com os comandos a seguir:
+
+```{r}
+# Reter as linhas de controle "Totais de Controle" e "Totais de Controle a Valor Atual"
+linhas_controle <- filter(flx_orig, !grepl("^\\d+", V100101))
+
+# e excluílas da base de dados
+flx_orig <- filter(flx_orig, grepl("^\\d+", V100101))
+
+```
+
+Feito isso, o próximo passo é realizar o "recálculo" de algumas variáveis conforme mostrado a seguir. 
+
+
+```{r}
+# Identifica se o fluxo é postecipado ou não.
+postecipado <- ifelse(flx_orig$V100101[1] == 1, TRUE, FALSE)
+
+# Obtém o ano do fluxo (ano inicial do fluxo...)
+ano <- flx_orig$V100201[1]
+
+# Recálculo de algumas variáveis...
+flx_orig <- mutate(flx_orig,
+                  V100401 = calcula_tx_desconto(i = flx_orig$V100301 / 100, postecipado = postecipado), 
+                  V111000 = V111101 + V111201 + V111301 + V111401 ,
+                  V121000 = V121100 + V121200 + V121300 + V121400 + V121500 + V121600 + V121700,
+                  V122000 = V122100 + V122200 + V122300 + V122400 + V122500 + V122600 + V122700,
+                  V123000 = V123100 + V123200 + V123300 + V123400,
+                  V124000 = V124100 + V124200 + V124300 + V124400 + V124500,
+                  V190000 = V111000 + V112000 + V119900 + V121000 + V122000 + V123000 + V124000 + V129000 + V130101 + V139901,
+                  V210000 = V211001 + V212001 + V213001 + V214001 + V215001 + V219901,
+                  V220000 = V221000 + V222000 + V223000 + V224000 + V225000 + V226000 + V227000 + V229000 + V239901,
+                  V240000 = V210000 + V220000,
+                  V250001 = V190000 - V240000)
+
+```
+
+Recalculadas as variáveis de interesse a partir dos dados informados no fluxo é necessário agora determinar o valor atual das mesmas e compará-las com os valores relativos aos `Totais de Controle a Valor Atual` que consta da planilha do fluxo atuarial o que mostramos no tópico a seguir.
+
+</br>
+
+## Identificação de divergências
+
+Neste tópico o objetivo é apresentar as análises de consistência que serão realizadas no fluxo atuarial.
+
+Uma primeira análise básica é a **revisão de cálculos**. Nas planilhas modelo do fluxo atuarial, algumas células são editáveis e outras são automaticamente calculadas pela planilha em função dos valores fornecidos. Essa análise consistirá apenas em checar se os valores da linha que contém os `Totais de Controle a Valor Atual` guardam conformidade com os valores recalculados a partir dos dados da planilha. Trata-se apenas de conferência de cálculo.
+
+A seguir ilustramos como realizar esta conferência.
+
+```{r}
+# Codigos a serem conferidos:
+#----------------------------
+codigos <- c("V109001", "V111000", "V111101", "V111201", "V111301", "V111401", "V112000",
+             "V119900", "V121000", "V121100", "V121200", "V121300", "V121400", "V121500",
+             "V121600", "V121700", "V122000", "V122100", "V122200", "V122300", "V122400",
+             "V122500", "V122600", "V122700", "V123000", "V123100", "V123200", "V123300",
+             "V123400", "V124000", "V124100", "V124200", "V124300", "V124400", "V124500",
+             "V129000", "V130101", "V130201", "V139901", "V190000", "V210000", "V211001",
+             "V212001", "V213001", "V214001", "V215001", "V219901", "V220000", "V221000",
+             "V222000", "V223000", "V224000", "V225000", "V226000", "V227000", "V229000",
+             "V239901", "V240000", "V250001")
+
+# Obtenção dos valores da linha de controle calculados
+#---------------------------------------------
+soma_calculado    <- apply(flx_orig[, codigos], 2, sum, na.rm=TRUE) 
+soma_vp_calculado <- apply(flx_orig[, codigos], 2, function(x) sum(x * flx_orig$V100401, na.rm = TRUE)) 
+soma_calc <- as.data.frame(rbind(soma_calculado, soma_vp_calculado))
+
+
+# Obtenção das linhas contendo os valores da linha de controle da planilha de fluxo
+soma_fluxo <- linhas_controle[, codigos]
+row.names(soma_fluxo) <- c("soma_fluxo", "soma_vp_fluxo")
+
+
+## IDENTIFICAÇÃO DOS CÓDIGOS COM DIVERGÊNCIAS
+##-------------------------------------------
+dados <- as.data.frame(cbind(t(soma_calc), t(soma_fluxo)))
+dados <- transform(dados,
+                    dif_soma = soma_calculado - soma_fluxo,
+                    dif_vp   = soma_vp_calculado - soma_vp_fluxo)
+
+dados <- subset(dados, dif_vp != 0)[, c("soma_vp_calculado", "soma_vp_fluxo", "dif_vp")]
+dados$cod <- row.names(dados)
+
+dados <- merge(dados, dicionario, by="cod")
+dados <- dados[, c("cod", "descr", "soma_vp_calculado", "soma_vp_fluxo", "dif_vp")]
+
+dados$dif_vp <- round(dados$dif_vp, 2)
+
+```
+
+
+A tabela a seguir apresenta os códigos das colunas para as quais os valores presente das variáveis recalculadas (`soma_vp_calculado`)  diferem do valor presente apresentados no arquivo do fluxo atuarial (`soma_vp_fluxo`). 
+
+```{r}
+
+knitr::kable(dados, format.args = list(decimal.mark = ",", big.mark = "."))
+
+```
+
+A tabela mostra diferencas desprezíveis. Para efeitos práticos pode-se, a meu ver, considerarmos que não há divergências. Parece razoável definirmos uma margem de tolerâncias para as divergências.
+
+</br>
+
+## Conferência com o DRAA
+
+Os dados apresentados no fluxo atuarial devem, também, guardar correspondência com os dados apresentados no DRAA. Assim, nesse tópico nosso objetivo é comparar os valores apresentados no fluxo atuarial com os apresentados no DRAA.
+
+Os dados do DRAA serão obtidos do arquivo `Valores_Compromissos.csv` disponibilizado pela SPrev.
+
+A seguir faremos a importação da base de dados e seleção dos registros relativos ao Ente e ano a que se refere o fluxo atuarial objeto de nossa análise.
+
+```{r}
+setwd("..\\dados")
+
+passivo <- read.csv2("Valores_Compromissos.csv", stringsAsFactors = FALSE)
+names(passivo) <- c("cnpj", "uf", "ente", "ano", "dt_envio", "situacao_draa",
+                    "tipo_plano", "tipo_massa", "codigo", "descr", "categoria",
+                    "vlr_geracao_atual", "vlr_geracao_futura")
+
+```
+
+Feita a importação dos dados, será necessário realizar modificação no `encoding` das variáveis e converter variáveis para o formato numérico. 
+
+```{r}
+
+passivo[] <- sapply(passivo, iconv, from="utf-8", to="latin1")
+passivo[,c("vlr_geracao_atual", "vlr_geracao_futura")] <- sapply(passivo[,c("vlr_geracao_atual", "vlr_geracao_futura")], function(x) as.numeric(gsub(",", ".", x)))
+
+```
+
+Agora precisamos recuperar nessa base de dados as informações relativas ao ente e ao ano do fluxo atuarial que estamos examinando. Isso pode ser feito da seguinte  forma:
+
+```{r, eval=FALSE}
+passivo_ente <- passivo %>%
+  filter(uf=="XX", ano==2019, ente=="XX", tipo_plano == "Previdenciário") %>%
+  select(codigo, descr, vlr_geracao_atual) %>%
+  arrange(codigo)
+```
+
+```{r, echo=FALSE}
+passivo_ente <- passivo %>%
+  filter(uf=="RS", ano==2019, ente=="Estrela",
+         tipo_plano == "Previdenciário", grepl("^[123]", codigo)) %>%
+  select(codigo, descr, vlr_geracao_atual) %>%
+  arrange(codigo)
+
+```
+
+**Nota:** Substituir `XX` pela `uf` e `ente` desejados. Essa informação não consta do código acima para não divulgar o RPPS cujo fluxo estamos analisando. 
+
+Vamos examinar parte dos dados:
+
+```{r}
+
+kable(head(passivo_ente, 10), format.args = list(decimal.mark = ",", big.mark = "."))
+
+```
+
+Agora temos que juntar estes dados ( DRAA ) com os dados relativos ao fluxo atuarial "conferido" e o "declarado", que já foram obtidos anteriormente. Mas antes, será necessário uma pequena organização dos dados para que seja possível juntar as duas bases de dados.
+
+```{r}
+soma_calc <- as.data.frame(t(soma_calc))
+soma_calc$cod <- row.names(soma_calc)
+
+
+soma_fluxo <- as.data.frame(t(soma_fluxo))
+soma_fluxo$cod <- row.names(soma_fluxo)
+
+dados_fluxo <- merge(soma_calc, soma_fluxo,
+                    by.x="cod",
+                    by.y="cod")
+
+```
+
+Vamos agora juntar os dados oriundos do fluxo atuarial com os dados oriundos do DRAA:
+
+```{r}
+passivo_ente$codigo <- paste("V", passivo_ente$codigo, sep = "")
+
+conferencia <- merge(passivo_ente, dados_fluxo[,c("cod", "soma_vp_calculado", "soma_vp_fluxo")],
+                  by.x = "codigo",
+                  by.y = "cod")
+
+# Calcula diferenças entre o DRAA e Fluxo Atuarial
+conferencia <- transform(conferencia,
+                         dif = round(vlr_geracao_atual - soma_vp_calculado, 2))
+```
+
+Vamos olhar o resultado obtido:
+
+```{r}
+# Apresentação do resultado (omitindo a variável "soma_vp_fluxo")
+kable(conferencia[,c("codigo", "descr", "vlr_geracao_atual", "soma_vp_calculado", "dif")],
+      format.args = list(decimal.mark = ",", big.mark = "."))
+```
+
+Lembrando que as variáveis são: 
+
+`vlr_geracao_atual` - Valor atual obtido do DRAA   
+`soma_vp_calculado` - Valor atual recalculado a partir do fluxo   
+`soma_vp_fluxo` - Valor atual apresentado no fluxo   
+
+
+</br>
+
+## Análise de Razoabilidade 
+
+Outro grupo de análises refere-se a análises de razoabilidade. Estas análises consistirão basicamente em análises gráficas. O objetivo é tentar identificar comportamentos anômalos de algumas varáveis.
+
+Exemplo: em se tratando de **Geração Atual**, que é um grupo fechado, é razoável que a variável `V109001` (Valor Atual dos Salários Futuros ou Base de Cálculo da Contribuição Normal) apresente um comportamento decrescente ao longo dos anos, fato que deverá ser conferido no gráfico dessa variável que apresentamos a seguir juntamente com o gráfico de outras variáveis.
+
+
+### Valor atual dos salários futuros (**V109001**)
+
+```{r, fig.height=4,fig.width=5}
+
+ggplot(flx_orig, aes(x=V100201, y=V109001 / 1e6)) +
+  geom_line() +
+  ylab("Valor Atual dos Salários Futuros \n(Em Milhões)") +
+  xlab("Anos")
+
+```
+
+O gráfico se comporta como esperado.
+
+### (A) Total das receitas com contribuições e compensação previdenciária (**V190000**)
+
+```{r, fig.height=4,fig.width=5}
+ggplot(flx_orig, aes(x=V100201, y=V190000 / 1e6)) +
+  geom_line() +
+  ylab("Total de Receitas com Contribuições e Comprev \n(Em Milhões)") +
+  xlab("Anos")
+
+```
+
+Também esta variável se comporta conforme o esperado.
+
+
+### (B) Total das despesas com benefícios do plano (**V240000**)
+
+```{r, fig.height=4,fig.width=5}
+ggplot(flx_orig, aes(x=V100201, y=V240000 / 1e6)) +
+  geom_line() +
+  ylab("Total das Despesas com Benefícios do Plano \n(Em Milhões)") +
+  xlab("Anos")
+
+```
+
+
+
+### (C) Insuficiência ou excedente financeiro (A-B) (**V250001**)
+
+```{r, fig.height=4,fig.width=5}
+ggplot(flx_orig, aes(x=V100201, y=V250001 / 1e6)) +
+  geom_line() +
+  ylab("Resultado Financeiro \n(Em Milhões)") +
+  xlab("Anos")
+
+```
+
+
+
+</br>

@@ -1,0 +1,1201 @@
+</br>
+
+```{r, echo=FALSE}
+rm(list = ls())
+```
+
+# DAIR
+
+Este capítulo é dedicado à análise dos dados relativos ao Demonstrativo das Aplicações e Investimento dos Recursos - DAIR. Este demonstrativo evidencia, mês a mês, a posição dos investimentos feitos pelos RPPS bem como dos ativos vinculados ao sistema previdenciário. 
+
+
+</br>
+
+## Importação e Pré-Processamento dos Dados
+
+Antes de iniciarmos qualquer análise com a base de dados do DAIR será necessário importá-la e realizar um pré-processamento com vistas a deixar a base pronta para uso.
+
+Os dados do DAIR podem ser baixados na site da SPrev/ME e, para os exercícos de 2018 e 2019, estão contidos nos seguintes arquivos: `Carteira 2018.csv` e `Carteira 2019.csv`    
+
+A importação pode ser feita da seguinte forma:
+
+```{r}
+setwd("..\\dados")
+arquivos <- c("Carteira 2018.csv", "Carteira 2019.csv")
+invest <- lapply(arquivos, read.csv2, stringsAsFactors = FALSE, na.strings = c("NULL", "", " "))
+invest <- do.call('rbind', invest)
+
+# Alterar os nomes das colunas
+names(invest) <- c("cnpj", "uf", "ente", "competencia", "segmento",
+                   "tipo_ativo", "limite_resol_cmn", "ident_ativo",
+                   "nm_ativo", "qtd_quotas", "vlr_atual_ativo", "vlr_total_atual",
+                   "perc_recursos_rpps", "pl_fundo", "perc_pl_fundo")
+```
+
+Feita a importação vamos inspecionar a base de dados.
+
+```{r}
+kable(head(invest), format.args = list(decimal.mark = ",", big.mark = "."))
+```
+
+Quantos registros tem a base?
+
+```{r}
+nrow(invest)
+```
+
+Será necessário realizar alguns procedimentos de "limpeza" na base de dados. A mais importante sendo a conversão de _encoding_ das variáveis não numéricas.
+
+```{r}
+invest <- invest %>%
+  mutate(ente        = iconv(ente,       from = "utf-8", to="latin1"),
+         segmento    = iconv(segmento,   from = "utf-8", to="latin1"),
+         tipo_ativo  = iconv(tipo_ativo, from = "utf-8", to="latin1"),
+         nm_ativo    = iconv(nm_ativo,   from = "utf-8", to="latin1"),
+         ident_ativo = trimws(ident_ativo))
+
+# Preencher valores do campo "tipo_ativo" para as disponibilidades. 
+invest$tipo_ativo <- ifelse(invest$segmento == "Disponibilidades Financeiras", "Disp", invest$tipo_ativo)
+
+# Converter a variável "competencia" para o formato de data
+invest$competencia <- as.Date(paste("01", invest$competencia, sep="/"), "%d/%m/%Y")
+
+```
+
+Outra transformação é fazer a exclusão de símbolos de pontuação da variável `ident_ativo`. Em especial para os CNPJ que identificam os fundos de investimentos.
+
+```{r}
+
+invest$ident_ativo <- gsub("[[:punct:]]", "", invest$ident_ativo)
+
+```
+
+Vamos verificar o período compreendido pela base de dados:
+
+```{r}
+sort(unique(invest$competencia))
+
+```
+
+Diversas outras verificações podem ser feitas na base de dados com vistas à obtenção de um melhor conhecimento da mesma, mas vamos nos restringir a essas por ora.
+
+
+
+</br>
+
+## Entrega do DAIR à SPrev/ME
+
+Um verificação necessária diz respeito a saber se o RPPS está encaminhando regularmente o DAIR à SPrev/ME. 
+
+Aliás, esse é um ponto de verificação constante na [Resolução Atricon  05/2018](http://www.atricon.org.br/normas/resolucao-atricon-no-052018/) que **Aprova as Diretrizes de Controle Externo Atricon nº 3214/2018, relacionadas à temática “Controle Externo na gestão dos Regimes Próprios de Previdência Social”**.
+
+_**25.1** (...)_    
+
+_u) se há o envio tempestivo à Secretaria de Previdência (SPREV) do Ministério da Fazenda dos demonstrativos obrigatórios (DIPR, DRAA, DPIN, **DAIR** e demonstrativos contábeis)_. 
+
+Para executarmos essa verificação é necessário comparar os Entes que constam da base de dados do DAIR (`invest`) com uma outra base de dados que contenha todos os RPPS.
+
+Vamos usar a base de dados do Indicador de Situação Previdenciária - ISP contida no arquivo `RESULTADO-ISP-2018.01.xlsx` como nossa referência.
+
+A importação dos dados é feita da seguir:
+
+```{r}
+setwd("..\\dados")
+isp <- read_excel("RESULTADO-ISP-2018.01.xlsx")
+isp <- isp[, -c(31, 32, 33, 34)]
+names(isp) <- c("ENTE",    "UF", "REGIAO", "GRUPO", "ESCRITURA",	"APLICFIN",
+                "CONTRIB", "COBSERVPUB", "CONCBENEF",	"EQUILATUAR",	"PARTSEG",	"PARCELTEMP",
+                "REGRAS",	 "UTILRECPREV",	"CONF",	"CLASSIF_CONF",	"ENDIVID",	"SOLVFIN",
+                "RAZAOAI", "COMPROMATUAR",	"SOLVATUAR",	"EQUIL",	"CLASSIF_EQUIL",
+                "DRAA",    "DIPR",	"DPIN",	"DAIR",	"TRANSP",	"CLASSIF_TRANSP",	"ISP201801")
+
+```
+
+Como será necessário juntar essa base com a base do DAIR, vamos limpar um pouco a base de dados para tornar viável essa operação. 
+
+```{r}
+# Entes na base do DAIR
+entes_dair <- invest %>%
+  select(ente, uf, competencia) %>%
+  distinct() %>%
+  unite(ente, ente, uf, sep=" - ") %>%
+  mutate(ente = iconv(ente, from = "utf-8", to="ASCII//TRANSLIT"),
+         ente = toupper(ente))
+
+# Entes na base do ISP
+entes_geral <- isp %>%
+  select(ENTE) %>%
+  mutate(ENTE = iconv(ENTE, from = "utf-8", to="ASCII//TRANSLIT"))
+
+```
+
+Agora vamos juntar as bases e fazer a checagem.
+
+```{r}
+entrega_dair <- entes_geral %>%
+  left_join(entes_dair, by=c("ENTE" = "ente")) %>%
+  mutate(entregou = "X") %>%
+  distinct() %>%
+  spread(key=competencia, value = entregou, fill = "-") %>%
+  select(- `<NA>`)  
+    
+```
+
+A base de dados `entrega_dair` nos informa quais entes fizeram a entrega do DAIR no período a que se refere a base de dados. Para conultarmos os Entes de uma UF específica, por exemplo AL, podemos fazer da seguinte forma:
+
+```{r}
+uf <- "AL"
+
+entrega_dair %>%
+  filter(grepl(paste(uf, "$", sep=""), ENTE)) %>%
+  kable()
+
+```
+
+
+O quadro acima nos fornece uma indicação de quais RPPS estão inadimplentes com a obrigação de encaminhamento do DAIR à SPrev. O quadro está ordenado por ordem alfabética mas poderia ser ordenado por inadimplência, ou seja, RPPS com maior quantidade de inadimplência no período viriam primeiro.
+
+Caso seja necessário exportar os dados para uma planilha do excel:
+
+```{r,eval=FALSE}
+setwd("..\\dados-produzidos")
+write_xlsx(entrega_dair, "entrega_dair_AL.xlsx")
+```
+
+<!-- Todo: calcular o percentual de entregas. qtd de entregas sobre total -->
+
+
+</br>
+
+## Aplicações em Fundos Vedados
+
+Uma análise possível com os dados disponibilizados é a verificação de que o RPPS possui recursos aplicados em fundos de investimentos vedados. A partir da edição da Resolução CMN n. 4.604/17 que altera a Resolução CMN n. 3.922/10, a SPrev passou a divulgar uma relação com os fundos de investimentos que seriam vedados aos RPPS. A lista é constantemente atualizada e por ocasião da elaboração deste documento a lista disponível era `FUNDOS-VEDADOS-CARTEIRA-DOS-FUNDOS-21122018.pdf`. Este arquivo pode ser baixado no site da SPrev.
+
+Os dados contidos no arquivo acima foram extraídos utilizando-se um _script_ em R gerando o arquivo `fundos_vedados_21-12-2018.xlsx` que será utilizado para verificar se um RPPS possui recursos aplicados nesses fundos.
+
+Vamos à importação dos dados:
+
+```{r}
+setwd("..\\dados")
+fundos_vedados <- read_excel("fundos_vedados_21-12-2018.xlsx")
+
+```
+
+Essa base de dados possui `r nrow(fundos_vedados)` registros. Será que existe duplicidade de fundos na base?
+
+```{r}
+any(duplicated(fundos_vedados$`CNPJ DO FUNDO`))
+```
+
+Para a identificação dos RPPS que possuem investimentos em fundos vedados será necessário "cruzar" os dados das duas bases: `invest` e `fundos_vedados`. Mas para isso será necessário, antes, fazer uma correção na base, especificamente na variável que identifica o CNPJ do fundo de investimento, visto que essa é a chave que nos permitirá relacionar as duas bases de dados.
+
+Na base `invest` a variável que contém informação sobre o CNPJ do fundo de investimento é `ident_ativo` e na base `fundos_vedados` é a variável `CNPJ DO FUNDO`.
+
+Vamos inspecionar as quinze primeiros valores destas duas variáveis:
+
+```{r}
+invest$ident_ativo[1:15]
+```
+
+```{r}
+fundos_vedados$`CNPJ DO FUNDO`[1:15]
+```
+
+Como pode ser visto, os valores do CNPJ estão "formatados" de formas distintas nas duas bases. Será necessário realizar a correção que vai consistir simplesmente remover os caracteres de pontuação. É isso que o código a seguir faz. 
+
+```{r}
+fundos_vedados$`CNPJ DO FUNDO` <- gsub("[[:punct:]]", "", fundos_vedados$`CNPJ DO FUNDO`)
+```
+
+Agora que fizemos a limpeza das variáveis, podemos realizar o cruzamento dos dados. No comando abaixo criamos uma nova coluna (ou variável caso prefiram) na base de dados `invest` chamada `aplica_fundo_vedado` que assumirá o valor 1 caso o CNPJ do fundo conste da base de fundos vedados e 0 caso contrário. Logo em seguida aplicamos um filtro para obter apenas os registros onde a variável `aplica_fundos_vedados` assume o valor 1 e criamos uma nova base de dados com esses valores chamada `invest_fv`.
+
+```{r}
+invest_fv <- invest %>%
+               mutate(aplica_fundo_vedado = ifelse(ident_ativo %in% fundos_vedados$`CNPJ DO FUNDO`, 1, 0)) %>%
+               filter(aplica_fundo_vedado == 1)
+
+```
+
+Gerada essa nova base de dados, vamos agora exportá-la para um arquivo do Excel.
+
+```{r, eval=FALSE}
+setwd("..\\dados-produzidos")
+write_xlsx(invest_fv, "AplicacoesFundosVedadosBR.xlsx")
+```
+
+Filtrando a base de dados podemos agora identificar os Entes de um EstadoF que possuíam, em ao menos um dos períodos abrangidos pela base de dados, aplicações em fundos de investimentos vedados.
+
+Exemplo: Será que no estado do Tocantins existe algum RPPS com aplicações em fundos vedados?
+
+```{r}
+# Definição da UF de interesse
+UF <- "TO"
+
+# Aplicação de filtro
+invest_fv %>%
+  filter(uf == UF) %>%
+  select(ente, ident_ativo, nm_ativo) %>%
+  distinct() %>%
+  kable()
+```
+
+
+</br>
+
+## Perfil das Aplicações de um RPPS
+
+Agora vamos estudar o perfil dos investimentos de um determinado RPPS. Vamos olhar o RPPS de **São Gonçalo** no Estado do Rio de Janeiro.
+
+Vamos a seguir identificar o Ente e o período de interesse para definição do perfil. 
+
+```{r}
+ENTE <- "São Gonçalo"
+UF <-  "RJ"
+
+periodo <- range(invest$competencia, na.rm = TRUE)
+periodo <- seq(periodo[1], periodo[2], by='month')
+
+```
+
+Feita a identificação vamos filtrar a base de dados para encontrar os registros relativos ao Ente selecionado.
+
+```{r}
+invest_rpps <- invest %>%
+  filter(uf == UF, ente == ENTE) %>%
+  arrange(competencia) %>%
+  select(competencia, tipo_ativo, vlr_total_atual) %>%
+  group_by(competencia, tipo_ativo) %>%
+  summarise(vlr_total_atual = sum(vlr_total_atual, na.rm = TRUE)) %>%
+  spread(key = competencia, value = vlr_total_atual) 
+
+```
+
+
+```{r}
+kable(invest_rpps,
+      format.args = list(decimal.mark = ",", big.mark = "."),
+      col.names = c("Tipo Ativo", format(as.Date(names(invest_rpps[-1])), "%m/%Y")))
+
+```
+
+O quadro mostra uma mudança nas aplicações a partir de abril de 2018 em resposta às alterações introduzidas pela Resolução CMN n. 4.604/17 do Conselho Monetário Nacional que alterou a Resolução CMN n. 3.922/10. Talvez em razão disso seja interessante limitar a série para os meses posteriores a abril de 2018, inclusive.
+
+```{r}
+invest_rpps <- invest_rpps %>% select(-(2:4))
+invest_rpps <- invest_rpps[complete.cases(invest_rpps[,-1]),]
+```
+
+```{r}
+kable(invest_rpps,
+      format.args = list(decimal.mark = ",", big.mark = "."),
+      col.names = c("Tipo Ativo", format(as.Date(names(invest_rpps[-1])), "%m/%Y")))
+```
+
+
+Os comandos a seguir fornecem um gráfico do percentual aplicado em cada fundo de investimento por mês com indicação de eventuais fundos vedados. Vamos explicitar o passo a passo até a elaboração do gráfico.
+
+O primeiro passo é obter na base de investimentos (`invest`) os dados relativos ao RPPS de interesse e os registros relativos aos ativos que se refiram a fundos de investimentos.
+
+Isso é feito a seguir:
+
+```{r}
+perfil <- invest %>%
+  filter(uf == UF, ente == ENTE, grepl("\\d{14}", ident_ativo)) %>%
+  mutate(fundos = paste(nm_ativo, " [", ident_ativo, "]", sep = "")) %>%
+  group_by(competencia, fundos) %>% 
+  summarise(vlr_total_atual = sum(vlr_total_atual, na.rm = TRUE)) %>%
+  ungroup() %>%
+  group_by(competencia) %>%
+  mutate(pct_aplic_fundo = vlr_total_atual / sum(vlr_total_atual, na.rm = TRUE)) 
+
+```
+
+O passo a seguir não é absolutamente necessário para o que queremos. Ele apenas vai nos permitir uma certa ordenação dos fundos de investimentos no gráfico de forma que fundos com maior valor aplicado apareçam antes de fundos com menos recursos. A estratégia adotada (não necessariamente a melhor) é ordenar pelo valor médio do percentual investido no período. 
+
+```{r}
+medias <- perfil %>%
+  group_by(fundos) %>%
+  summarise(media = mean(pct_aplic_fundo, na.rm = TRUE)) %>%
+  arrange(desc(media)) %>%
+  mutate(ordem = rank(media, ties.method= "first"))
+```
+
+Agora precisamos juntar esses dados com a base de dados do RPPS obtida anteriormente.
+
+```{r}
+# Juntar com base contendo a ordenação dos fundos
+perfil <- perfil %>%
+              left_join(medias[, c("fundos", "ordem")], by="fundos") %>%
+              arrange(desc(ordem))
+
+```
+
+Agora vamos identificar os fundos vedados.
+
+```{r}
+# Identificar fundos que sejam vedados.
+perfil <- perfil %>%
+              mutate(vedado = ifelse(gsub(".*\\[(.*)\\]", "\\1", fundos) %in% fundos_vedados$`CNPJ DO FUNDO`, "Vedado", "Permitido"))
+
+```
+
+
+E agora já podemos fazer o gráfico.
+
+```{r, fig.width=12}
+ggplot(perfil, aes(x=competencia, y=reorder(fundos, ordem), size=pct_aplic_fundo,colour = factor(vedado))) +
+  geom_point() +
+  xlab("Meses") + ylab("Fundos") +
+  scale_color_manual(values = c("lightblue", "tomato"))
+
+```
+
+O gráfico mostra a existência de um mesmo fundo com denominações ligeiramente diferentes. Exemplo: o **Itaú Soberano** e o **Catânia**.
+
+Se o RPPS inciar um investimento em um fundo novo será possível identificá-lo nesse gráfico, o que parece ser um recurso interessante para o monitoramento das carteiras de fundos de investimento dos RPPS. 
+
+
+
+</br>
+
+## Evolução dos Ativos Garantidores
+
+De grande importância para os RPPS são os seus **ativos garantidores**, ou seja, os recursos que o RPPS acumula e aplica no mercado financeiro para ajudar a pagar os benefícios juntamente com os bens, valores e direitos vinculados ao RPPS.
+
+Neste capítulo nosso objetivo é verificar como os ativos garantidores estão evoluindo no tempo. Basicamente nossa proposta é fazer um gráfico de linha mostrando a evolução dos recursos.
+
+Em razão de disposições contidas na Resolução CMN n. 3.922/10 vamos trabalhar com os conceitos de `Ativo Garantidor Bruto` e `Ativo Garantidor Líquido`.
+
+Por **ativo garantidor bruto** iremos considerar a totalidade dos ativos que o RPPS relaciona no DAIR. O **ativo garantidor líquido** não inclui determinados ativos conforme disposto no art. 6^o^ da Resolução CMN n. 3.922/10.
+
+Na base de dados do DAIR a identificação dos ativos está definida na variável `tipo_ativo`. Antes de iniciarmos, vamos verificar quais tipos de ativos existem na base de dados:
+
+```{r}
+invest %>%
+  distinct(tipo_ativo) %>%
+  kable()
+```
+
+Algumas observações: em razão das alterações feitas na Resolução CMN n. 3.922/10 pela Resolução CMN n. 4.604/17, que passaram a vigir a partir de abril de 2018, alguns ativos  estão com duas denominações na base, refletindo as alterações realizadas no CADPREV para se adequar à legislação. Por exemplo os ativos `FI 100% títulos TN` e `FI 100% títulos TN - Art. 7º, I, b` ou  `Poupança` e `Poupança - Art. 7º, VI, b`. 
+
+Também é possível ver a existência de ativos sem identificação, representados pelo `NA`. Vamos ver quantos ativos estão nessa condição:
+
+```{r}
+sum(is.na(invest$tipo_ativo))
+```
+
+Apenas 4 observações. Vamos inspecioná-las:
+
+```{r}
+kable(subset(invest, is.na(tipo_ativo)))
+```
+
+Aparentemente foram erros. Vamos excluir esses registros da base de dados:
+
+```{r}
+invest <- subset(invest, !is.na(tipo_ativo))
+```
+
+Agora estamos em condições de realizar a soma dos ativos registrados no DAIR em cada mês para obtermos o total dos ativos garantidores brutos no mês.
+
+```{r}
+ativoGarantBruto <- invest %>%
+  group_by(uf, ente, competencia) %>%
+  summarize(vlrAtivoTotal = sum(vlr_total_atual, na.rm=TRUE)) 
+
+```
+
+Vamos ver agora como está evoluindo os ativos garantidores totais de Nova Iguaçu no Estado do Rio de Janeiro:
+
+```{r}
+ENTE <- "Nova Iguaçu"
+UF <- "RJ"
+
+ativoGarantBruto %>%
+  filter(uf == UF, ente == ENTE) %>%
+  ggplot(aes(x=competencia, y=vlrAtivoTotal)) +
+  geom_line() +
+  geom_point() +
+  theme(axis.text.x = element_text(angle = 90, vjust=0.5)) +
+  scale_x_date(date_breaks="1 month", labels = date_format("%Y-%m"))
+
+
+```
+
+Alguma coisa parece errada em janeiro e fevereiro de 2019. Mais de 60 bilhões!?!?
+
+Vamos agora calcular os **ativos garantidores líquidos**, ou seja, devemos excluir do rol de ativos constantes do DAIR, de acordo com o art.6^o^ da Resolução CMN 3.922/10,  _os ativos vinculados por lei ao regime próprio de previdência social_, _demais bens, direitos e ativos com finalidade previdenciária do regime próprio de previdência social_, as _disponibilidades financeiras_ mantidas em conta corrente e as _cotas de fundos de investimento imobiliário que forem admitidas à negociação no mercado secundário, conforme regulamentação da CVM, e que sejam integralizadas por imóveis legalmente vinculados ao Regime Próprio de Previdência Social_.
+
+Para tanto devemos conseguir identificar, no rol de ativos que integram o DAIR, aqueles que se encaixam nas categorias acima mencionadas. Para simplificar essa tarefa vamos trabalhar com os dados posteriores a abril de 2018 em razão de ter sido essa a data limite para os RPPS ajustarem seus investimentos ao regramento definido pela Resolução n. CMN 4.604/17 e também porque a partir dessa data o DAIR passou a contar com novos ativos. 
+
+Vamos então filtrar a base de dados:
+
+```{r}
+ativoGarantLiquido <- invest %>%
+  filter(competencia >= ymd("2018-04-01"))
+```
+
+Vamos agora inspecionar o rol de ativos com vistas a identificarmos quais devem ser excluídos.
+
+```{r}
+ativoGarantLiquido %>%
+  distinct(tipo_ativo) %>%
+  kable()
+```
+
+Para realizar a exclusão dos ativos vamos adotar o seguinte critério: excluir todos os ativos em cujas descrições, constantes do quadro acima, não estejam presentes a indicação do dispositivo da Resolução CMN n. 3.922/10 no qual o ativo se enquadra. Não sei se o critério é adequado mas servirá ao propósito de ilustrar como realizar o procedimento. Surgindo formas melhores de se fazer a seleção de ativos vamos implementar.  
+
+Então o próximo passo é realizar a exclusão dos referidos ativos:
+
+```{r}
+ativoGarantLiquido <- ativoGarantLiquido %>%
+  filter(grepl("Art.*$", tipo_ativo))
+```
+
+Vamos dar uma conferida:
+
+```{r}
+ativoGarantLiquido %>%
+  distinct(tipo_ativo) %>%
+  kable()
+```
+
+Aparentemente está tudo ok. Podemos agora somar os valores dos ativos. Esse passo é idêntico ao já realizado para agregar os valores dos ativos brutos.
+
+```{r}
+ativoGarantLiquido <- ativoGarantLiquido %>%
+  group_by(uf, ente, competencia) %>%
+  summarize(vlrAtivoTotal = sum(vlr_total_atual, na.rm=TRUE)) 
+
+```
+
+Agora vamos ao gráfico:
+
+```{r}
+ENTE <- "Nova Iguaçu"
+UF <- "RJ"
+
+ativoGarantLiquido %>%
+  filter(uf == UF, ente == ENTE) %>%
+  ggplot(aes(x=competencia, y=vlrAtivoTotal)) +
+  geom_line() +
+  geom_point() +
+  theme(axis.text.x = element_text(angle = 90, vjust=0.5)) +
+  scale_x_date(date_breaks="1 month", labels = date_format("%Y-%m"))
+
+```
+
+Vemos agora uma queda nos ativos liquidos de novembro para dezembro de 2018.
+
+Uma boa ideia é apresentar as duas séries no mesmo gráfico e também obter a relação entre o ativo garantidor liquido e ativo garantidor bruto.
+
+```{r}
+ativoGarantBruto$tipo <- "Ativo Bruto"
+ativoGarantLiquido$tipo <- "Ativo Liquido"
+ativos_garantidores <- rbind(ativoGarantBruto, ativoGarantLiquido)
+```
+
+Vamos agora fazer o gráfico:
+
+```{r}
+ENTE <- "Nova Iguaçu"
+UF <- "RJ"
+
+ativos_garantidores %>%
+  filter(uf == UF, ente == ENTE) %>%
+  ggplot(aes(x=competencia, y=log(vlrAtivoTotal), group=tipo, color=tipo)) +
+    geom_line(size=1) +
+    geom_point(size=2) +
+  theme(axis.text.x = element_text(angle = 90, vjust=0.5)) +
+  scale_x_date(date_breaks="1 month", labels = date_format("%Y-%m"))
+  
+  
+```
+
+Para que fosse possível ter a visualização dos dados fizemos o gráfico do logaritimo dos valores dos ativos. 
+
+A relação entre ativos líquidos e brutos pode ser obtida da seguinte forma:
+
+```{r}
+ativos_garantidores2 <- ativoGarantBruto %>%
+                          inner_join(ativoGarantLiquido, by=c("ente", "competencia")) %>%
+                          mutate(relacao = round(vlrAtivoTotal.y / vlrAtivoTotal.x * 100, 2))
+```
+
+Vamos plotar essa relação para o município de São Gonçalo no ERJ:
+
+```{r}
+ENTE <- "São Gonçalo"
+UF <- "RJ"
+
+ativos_garantidores2 %>%
+  filter(uf.x == UF, ente == ENTE) %>%
+  ggplot(aes(x=competencia, y=relacao)) + 
+  geom_line() +
+  geom_point() +
+  theme(axis.text.x = element_text(angle = 90, vjust=0.5)) +
+  scale_x_date(date_breaks="1 month", labels = date_format("%Y-%m"))
+  
+```
+
+
+</br>
+
+## Enquadramento de Fundos de Investimentos
+
+Uma outra verificação possível com os dados disponibilizados refere-se ao enquadramento dos fundos de invetimentos realizado pelos RPPS. Estamos aqui denominando de "enquadramento" ao ato de classificar um determinado ativo, em especial os fundos de investimento, em uma das opções constantes da Resolução CMN n. 3.922/10.
+
+Assim, nosso objetivo nesse tópico é conferir o enquadramento informado pelo RPPS ao preencher o DAIR com o enquadramento definido pela SPrev/ME em relação aos fundos de investimento.
+
+Periodicamente a SPrev publica em seu _site_ uma planilha com o enquadramento dos fundos de investimento conforme Resolução CMN n. 3.922/10. Assim é possível comparar o enquadramento divulgado pela SPrev, contida nessa planilha, com o enquadramento realizado pelos RPPS por ocasião do preenchimento do DAIR.
+
+Vamos importar os dados contidos na planilha da SPrev:
+
+```{r}
+setwd("..\\dados")
+EnquadSPrev <- read_excel("Planilha-de-Enquadramento-dos-Fundos-com-aplicacoes-dos-RPPS_082019_.xlsx", skip=1) 
+
+```
+
+Vamos colocar nomes mais amigáveis na base de dados.
+
+```{r}
+names(EnquadSPrev) <- c("cnpj", "nm_fundo", "seguimento", "tipo_ativo", "cnpj_admin", "cnpj_gestor")
+
+```
+
+Agora podemos inspecionar a base de dados.
+
+```{r}
+kable(head(EnquadSPrev))
+```
+
+Feita a importação dos dados, será necessário realizar o pré-processamento com vistas a melhorar a qualidade da base para uso posterior.
+
+Um primeiro ajuste é retirar da variável `tipo_ativo` a parte da _string_ que identifica o dispositivo da Resolução CMN 3922/10 no qual o fundo está enquadrado. Por exemplo, _na string_ `FI de Ações - Índices c/ no mínimo 50 ações - Art. 8º, I, a`, queremos apenas o valor `Art. 8º, I, a`. Podemos fazer isso da seguinte forma:
+
+```{r}
+EnquadSPrev <- EnquadSPrev %>%
+                 mutate(enquad_sprev = str_extract(tipo_ativo, "Art.*$"))
+```
+
+Um outro ajuste é corrigir o valor do CNPJ do fundo de investimento que, no processo de importação, perdeu os zeros que estavam à esquerda. Será necessário voltar com esses zeros para que os CNPJ tenham todos 14 dígitos.
+
+```{r}
+EnquadSPrev$cnpj <- sprintf("%014.0f", EnquadSPrev$cnpj)
+
+```
+
+Vamos agora filtrar a base de dados do DAIR (`invest`) de forma a obter apenas os registros a partir de abril de 2018 (data a partir da qual as alterações introduzidas pela Resolução CMN n. 4.604/17 passaram a vigorar) bem como os registros relativos a fundos de investimentos. Isso pode ser feito da seguinte forma:
+
+```{r}
+invest_fundos <- filter(invest,
+                        competencia >= as.Date("2018-04-01"),
+                        grepl("\\d{14}", ident_ativo))
+
+
+```
+
+Agora vamos criar uma nova coluna nesta base de dados contendo o enquadramento do fundo de investimento efetuado pelo RPPS ao preencher o DAIR. Vamos fazer da mesma forma que fizemos para o arquivo contendo a classificação realizada pela SPrev.
+
+```{r}
+invest_fundos <- invest_fundos %>%
+                 mutate(enquad_rpps = str_extract(tipo_ativo, "Art.*$"))
+```
+
+Ok. Agora podemos juntar esta base, contendo os dados provenientes do DAIR, com a base contendo o enquadramento dos fundos realizado pela SPrev, para que tenhamos na mesma base de dados tanto o enquadramento realizado pelo RPPS como o enquadramento informado pela SPrev .
+
+```{r}
+invest_fundos <- invest_fundos %>%
+                  left_join(EnquadSPrev[,c("cnpj", "nm_fundo", "enquad_sprev")],
+                            by=c("ident_ativo" = "cnpj"))
+# Aumentou a quantidade de registros. 
+```
+
+Agora já temos condições de comparar as variáveis `enquad_rpps` com a variável `enquad_sprev` para identificar eventuais divergências de enquadramento. Antes, porém, mais uma pequena modificação nos dados, especificamente nas duas variáveis citadas.
+
+```{r}
+invest_fundos <- invest_fundos %>%
+                  mutate(enquad_rpps = toupper(gsub('[[:punct:]]| |º', '', enquad_rpps)),
+                         enquad_sprev= toupper(gsub('[[:punct:]]| |º', '', enquad_sprev)))
+
+```
+
+Vamos agora criar uma nova variável na base de dados `invest_fundos` contendo os valores 0 e 1 caso os enquadramentos sejam, respectivamente, iguais ou diferentes.
+
+```{r}
+invest_fundos$diverg_enquad <- ifelse(invest_fundos$enquad_rpps == invest_fundos$enquad_sprev, 0, 1)
+```
+
+Vamos agora filtrar para obtermos apenas os registros para os quais as classificações foram diferentes.
+
+```{r}
+divergencia_enquad <- filter(invest_fundos, diverg_enquad == 1)
+```
+
+Quantos registros nessa condição:
+
+```{r}
+nrow(divergencia_enquad)
+```
+
+Quantos entes apresentaram problemas com o enquadramento de fundos de investimentos?
+
+```{r}
+
+length(unique(divergencia_enquad$ente))
+
+```
+
+Vamos ver, por exemplo, o município de Japeri no Estado do Rio de Janeiro.
+
+```{r}
+ENTE <- "Japeri"
+UF <- "RJ"
+
+diverg_rpps <- divergencia_enquad %>%
+                  filter(uf == UF, ente == ENTE) %>%
+                  select(ente, competencia, ident_ativo, nm_ativo, enquad_rpps, enquad_sprev) %>%
+                  arrange(competencia)  
+
+```
+
+```{r}
+kable(diverg_rpps)
+```
+
+Caso a gente queira apenas a relação dos fundos com divergência:
+
+```{r}
+diverg_rpps %>%
+  distinct(ident_ativo, nm_ativo, enquad_rpps, enquad_sprev) %>%
+  kable()
+```
+
+Uma consequência imediata de divergências nos enquadramentos dos fundos de investimento é a possibilidade de burla aos limites impostos pela Resolução CMN n. 3.922/10. Essa análise é o objeto da próxima seção.
+
+
+
+</br>
+
+## Limites de Aplicações da Resolução CMN n. 3.922/10
+
+Os RPPS possuem limitações à quantidade de recursos que podem investir em determinados tipos de ativos. Estes limites estão estabelecidos na [Resolução CMN n. 3.922/10](https://www.bcb.gov.br/estabilidadefinanceira/exibenormativo?tipo=Resolu%C3%A7%C3%A3o&numero=3922). Assim, uma verificação de grande importância é quanto ao atendimento desses limites pelos RPPS. 
+
+Esta verificação é, inclusive, recomendada pela [Resolução Atricon n. 05/2018](http://www.atricon.org.br/normas/resolucao-atricon-no-052018/), conforme descrito a seguir: 
+
+
+" _(...)_    
+
+_25 A fiscalização dos RPPS terá como escopo, prioritariamente e no que couber, pontos de controle selecionados as seguir, dentre as quatro principais áreas de atuação de auditoria previdenciária:_
+
+_25.4 Aplicações financeiras:_
+
+_f) se a carteira de investimentos está dentro dos limites normativos_ "
+
+
+Para realizar esta verificação, devemos calcular o percentual aplicado em cada tipo de ativo e comparar esses valores com os limites estabelecidos na Resolução CNM n. 3.922/10.
+
+A base de dados do DAIR possui um campo denominado `limites_resol_cmn` que indica esses limites. Possui, também outro campo denominado `perc_recursos_rpps` que informa o percentual dos recursos do RPPS investido em cada um dos ativos elencados no DAIR.
+
+Para fazermos essa verificação devemos somar esses percentuais, em cada mês, para todos os ativos de mesma natureza, ou seja, de mesma classificação, e comparar o valor obtido com o percentual permitido pela Resolução CMN n. 3.922/10. 
+
+Nossa abordagem será a seguinte: somaremos os valores de cada tipo de ativo para cada Ente e para cada mês e verificaremos o quanto o valor aplicado em cada tipo de ativo representa do total dos **ativos garantidores liquidos** (Art. 6^o^ da Res. CMN n. 3.922/10) no mês.
+
+Os limites de aplicação permitidos serão então adicionados à base de dados a partir de um arquivo externo em excel contendo a relação dos ativos e seus limites.
+
+Vamos fazer esse passo a passo a partir da base de dados bruta.   
+
+A primeira coisa a ser feita é filtrar a base para pegarmos os registros posteriores a abril de 2018 que, como já dissemos, já incorpora as alterações promovidas na Resolução CMN n. 3.922/10 pela Resolução CMN n. 4.604/17. 
+
+Vamos então filtrar a base de dados:
+
+```{r}
+dairLimites <- invest %>% 
+                filter(competencia >= ymd("2018-04-01"))
+```
+
+Agora precisamos ter uma classificação para cada tipo de ativo na base de dados. Em princípio, a coluna `tipo_ativo` deveria ser suficiente, mas não é. Vamos relembrar quais tipos de ativos estão na base filtrada:
+
+```{r}
+
+dairLimites %>%
+  distinct(tipo_ativo) %>%
+  kable()
+
+```
+
+A maior parte dos ativos constante da base de dados já possui uma classificação, mas temos ainda um rol de ativos não classificados, que elencamos a seguir:  
+
+`Disp`    
+`Prédio Comercial`    
+`Outros - Imóveis`    
+`Terreno`    
+`Casa`    
+`Loja`    
+`Prédio Residencial`    
+`Apartamento`    
+`Outros Bens, Direitos e Ativos`    
+`Títulos de Renda Fixa`    
+`Valores Mobiliários`    
+`Fundos de Investimento não previstos em Resolução CMN`    
+`FI 100% títulos TN`     
+`FI de Renda Fixa`     
+`FI em Ações`     
+`FI Multimercado - Aberto`    
+`Fundo Investimento - Sufixo Investimento no Exterior`     
+
+Olhando o rol de ativos não classificados, podemos dizer que basicamente temos **disponibilidades** (`Disp`), **imóveis** (`Prédio Comercial`, `Outros - Imóveis`, `Terreno`, `Casa`, `Loja`, `Prédio Residencial`, `Apartamento`), **ativos vinculados ao RPPS** (`Outros Bens, Direitos e Ativos`, `Títulos de Renda Fixa`, `Valores Mobiliários` e `Fundos de Investimento não previstos em Resolução CMN`) e um punhado de fundos de investimento que podem ser classificados(`FI 100% títulos TN`, `FI de Renda Fixa`, `FI em Ações`, `FI Multimercado - Aberto` e `Fundo Investimento - Sufixo Investimento no Exterior`).
+
+Em razão disso, vamos criar uma nova coluna na base de dados contendo uma classificação para todos os ativos. 
+
+Para os ativos sem classificação, vamos adotar as seguintes classificações: `Disp`, `Imoveis` e `Outros`. Os fundos não classificados o serão da seguinte forma:
+
+Fundo                                                | Classificação
+-----------------------------------------------------|--------------
+FI 100% títulos TN                                   | Art. 7º, I, b
+FI de Renda Fixa                                     | Art. 7º, IV, b
+FI em Ações                                          | Art. 8º, II, a 
+FI Multimercado - Aberto                             | Art. 8º, III
+Fundo Investimento - Sufixo Investimento no Exterior | Art. 9ºA, II
+
+Vamos agora à criação dessa nova coluna. Mas vamos por etapas para a coisa ficar clara:
+
+O primeiro passo é criar a nova coluna (`classificacao`) e colocar a classificação dos **ativos que já estão classificados**. Isso pode ser feito da seguinte forma:
+
+```{r}
+dairLimites <- dairLimites %>%
+                mutate(classificacao = str_extract(tipo_ativo, "Art.*$"))
+
+```
+
+Agora temos que ir preenchendo esta nova coluna com a classificação dos demais ativos não classificados. Vamos fazer isso a seguir, começando com as disponibilidades e os imóveis:
+
+```{r}
+dairLimites <- dairLimites %>%
+  mutate(classificacao =  ifelse(tipo_ativo == "Disp", "Disp",
+                          ifelse(tipo_ativo %in% c("Prédio Comercial", "Outros - Imóveis",
+                                                     "Terreno", "Casa", "Loja", "Prédio Residencial",
+                                                     "Apartamento"), "Imoveis",
+                          ifelse(tipo_ativo %in% c("Outros Bens, Direitos e Ativos",
+                                                     "Títulos de Renda Fixa",
+                                                     "Valores Mobiliários",
+                                                     "Fundos de Investimento não previstos em Resolução CMN"), "Outros",
+                                 classificacao)))
+         )
+
+```
+
+
+Da mesma forma, vamos classificar os fundos que não estavam classificados.
+
+```{r}
+dairLimites <- dairLimites %>%
+  mutate(classificacao = ifelse(tipo_ativo == "FI 100% títulos TN", "Art. 7º, I, b",
+                         ifelse(tipo_ativo == "FI de Renda Fixa", "Art. 7º, IV, b",
+                         ifelse(tipo_ativo == "FI em Ações", "Art. 8º, II, a",
+                         ifelse(tipo_ativo == "FI Multimercado - Aberto", "Art. 8º, III",
+                         ifelse(tipo_ativo == "Fundo Investimento - Sufixo Investimento no Exterior", "Art. 9ºA, II", classificacao)))))
+         )
+```
+
+Vamos agora "padronizar" a variável `classificacao` para garantir que não tenhamos dois ativos de mesma classificação classificados de forma diferente por conta de um espaço a mais ou a menos ou outro problema qualquer.
+
+```{r}
+dairLimites <- dairLimites %>%
+  mutate(classificacao = toupper(gsub('[[:punct:]]| |º', '', classificacao)))
+```
+
+Vamos agora inspecionar os valores da variável `classificacao`:
+
+```{r}
+dairLimites %>%
+  distinct(classificacao) %>%
+  arrange(classificacao) %>%
+  kable()
+
+```
+   
+Todas as observações estão classificadas. Podemos agora continuar. O próximo passo é somar os valores de todos os ativos de uma mesma classificação para cada ente e para cada mês e ver quanto o ativo representa do ativo total do RPPS. Com isso saberemos, por exemplo, quanto de recursos um Ente tem aplicado num determinado tipo de ativo e qual o percentual dos recursos que esse ativo representa na carteira do RPPS (**ativo garantidor bruto**).
+
+Vamos criar uma nova base de dados com essa agregação.
+
+```{r}
+dairLimitesAgreg <- dairLimites %>%
+  group_by(cnpj, ente, uf, competencia, classificacao) %>%
+  summarise(VlrTotalAtivo = sum(vlr_total_atual, na.rm = TRUE)) %>%
+  ungroup() %>%
+  group_by(cnpj, ente, uf, competencia) %>%
+  mutate(pctVlrTotalAtivo = round(VlrTotalAtivo / sum(VlrTotalAtivo, na.rm=TRUE), 2))
+```
+
+```{r}
+kable(head(dairLimitesAgreg, 16))
+```
+
+Com essa base de dados é possível verificar a composição da carteira de ativos de um RPPS mês a mês. A tabela acima mostra que o município de Figueirópolis possui disponibilidades e aplicações em fundos de investimentos classificados no "Art. 7^o^, I, b" da Resolução CMN n. 3.922/10 (`FI 100% títulos TN`).
+
+Vamos olhar graficamente como estão evoluindo os ativos do município de `Nova Iguaçu` no RJ:
+
+```{r}
+ENTE <- "Nova Iguaçu"
+UF <- "RJ"
+
+dairLimitesAgreg %>%
+  filter(uf == UF, ente == ENTE) %>%
+  ggplot(aes(x=competencia, y=pctVlrTotalAtivo, group=classificacao, color=classificacao)) +
+  geom_line(size=1.5) +
+  geom_point(size=4) +
+  theme(axis.text.x = element_text(angle = 90, vjust=0.5)) +
+  scale_x_date(date_breaks="1 month", labels = date_format("%Y-%m"))
+
+```
+
+
+Uma verificação interessante é se os percentuais somam 100% em todos os meses.
+
+```{r}
+ENTE <- "Nova Iguaçu"
+UF <- "RJ"
+
+dairLimitesAgreg %>%
+  mutate(pctVlrTotalAtivo = pctVlrTotalAtivo * 100) %>%
+  ungroup() %>%
+  filter(uf == UF, ente == ENTE) %>%
+  select(competencia, classificacao, pctVlrTotalAtivo) %>%
+  spread(key=competencia, value=pctVlrTotalAtivo) %>%
+  rbind(., append("TOTAL", round(apply(.[,-1], 2, sum, na.rm=TRUE), 2))) %>%
+  kable(col.names = c("Classificação", format(as.Date(names(.)[-1]), "%b/%y")))
+  
+```
+
+Os percentuais contidos no campo `pctVlrTotalAtivo` foram calculados considerando **todos** os ativos relacionados no DAIR (**ativo garantidor bruto**).
+
+Não obstante, para efeito do cálculo dos limites de aplicação de cada tipo de ativo, a Resolução CMN n. 3.922/10 dispõe em seu Art. 6^o^ que o percentual deve ser calculado excluindo-se **_os ativos vinculados por lei ao regime próprio de previdencia social_**, **_demais bens, direitos e ativos com finalidade previdenciária do regime prório de previdência social_**, as **_disponibilidades financeiras mantidas em conta corrente_** e as **_cotas de fundos de investimento imobiliário que forem admitidas à negociação no mercado secundário, conforme regulamentação da CVM, e que sejam integralizadas por imóveis legalmente vinculados ao RPPS_**.
+
+Assim, para realizarmos as comparações devemos calcular os percentuais excluindo-se esses ativos, ou seja, devemos considerar apenas os ativos garantidores líquidos. Além disso um outro ajuste será necessário na base de dados.
+
+A Resolução CMN n. 3.922/10 não estipula limites individuais para os ativos classificados como **"Art 7o, III, a"** ou **"Art 7o, III, b"**. Apenas diz que a **soma** dos valores aplicados nos mesmos não pode ser superior a 60% dos recursos do RPPS (ativo garantidor líquido). O mesmo acontece com os ativos classificados como **"Art 7o, IV, a"** ou **"Art 7o, IV, b"** cuja **soma** não deve exceder 40% dos recursos do RPPS.
+
+Uma outra restrição é que a soma dos ativos classificados no art. 8^o^ não pode ser superior a 30%. Mas cada ativo do art. 8^o^ possui seus limites individuais que serão utilizados na nossa verificação.
+
+Vamos partir da base de dados `dairLimites`. Vamos substituir os ativos "Art 7o, III, a"** e **"Art 7o, III, b" por um ativo que chamaremos "Art 7o, III, #" e os ativos "Art 7o, IV, a" e "Art 7o, IV, b" por um ativo "Art 7o, IV, #" e recalcularemos os percentuais considerando o ativo líquido.
+
+```{r}
+dairLimitesAgregLiq <- dairLimites %>%
+  mutate(classificacao = ifelse(classificacao %in% c("ART7IIIA", "ART7IIIB"), "ART7III#",
+                         ifelse(classificacao %in% c("ART7IVA", "ART7IVB"),   "ART7IV#", classificacao))) %>%
+  group_by(cnpj, ente, uf, competencia, classificacao) %>%
+  mutate(VlrTotalAtivoLiq = ifelse(classificacao %in% c("DISP", "IMOVEIS", "OUTROS"), 0, vlr_total_atual)) %>%
+  summarise(VlrTotalAtivoLiq = sum(VlrTotalAtivoLiq, na.rm = TRUE)) %>%
+  ungroup() %>%
+  group_by(cnpj, ente, uf, competencia) %>%
+  mutate(pctVlrTotalAtivoLiq = round(VlrTotalAtivoLiq / sum(VlrTotalAtivoLiq, na.rm=TRUE) * 100, 2)) %>%
+  filter(!classificacao %in% c("DISP", "IMOVEIS", "OUTROS"))
+
+
+```
+
+Com  isso temos três bases de dados derivadas da base original do DAIR: **`dairLimites`**, **`dairLimitesAgreg`** e **`dairLimitesAgregLiq`**. Vamos relembrar no que elas diferem:
+
+* `dairLimites` - é idêntica à base original `invest` apenas possuindo uma coluna `classificacao` que contem uma classificação para todos os ativos da base.    
+* `dairLimitesAgreg` - Apresenta o percentual que cada tipo de ativo representa do **total de ativos** que o RPPS possui.    
+* `dairLimitesAgregLiq` - essa base apresenta o percentual que cada tipo de ativo representa do total **líquido** dos ativos do RPPS, além de apresentar uma reclassificação de quatro tipos de ativos. Os ativos "Art 7o, III, a"** e **"Art 7o, III, b" tornaram-se "Art 7o, III, #" e os ativos "Art 7o, IV, a" e "Art 7o, IV, b" tornaram-se "Art 7o, IV, #". Será essa base que utilizaremos para realizar a verificação do cumprimento dos limites.     
+
+Para que possamos realizar a análise será necessáro juntar a esta última base os limites de aplicação permitidos pela Resolução CMN n. 3.922/10. Vamos adicionar à base de dados os limites de aplicações permitidos pela Resolução CMN n. 3.922/10. Estes valores estão armazenados na planilha `limites_cmn.xlsx`. Vamos importar os dados:
+
+```{r}
+setwd("..\\dados")
+limites_cmn <- read_excel("limites_cmn.xlsx",  sheet="limites_Res4604")
+limites_cmn$classificacao <- toupper(gsub('[[:punct:]]| |o', '', limites_cmn$ativo))
+
+```
+
+Vamos olhar o conteúdo do arquivo:
+
+```{r}
+kable(limites_cmn)
+```
+
+Na tabela de limites existe uma pequena incorreção que iremos ajustar logo em seguida.
+
+Os limites para os ativos **"Art 7o, III, a"** e **"Art 7o, III, b"** foram especificados em 60% e os limites dos ativos **"Art 7o, IV, a"** e **"Art 7o, IV, b"** em 40%. Ocorre que na verdade é a **soma dos dois ativos** que deve perfazer, respectivamente, 60% e 40% dos recursos do RPPS.
+
+Importados os dados vamos juntá-los à base de dados:
+
+```{r}
+dairLimitesAgregLiq <- dairLimitesAgregLiq %>%
+                       left_join(limites_cmn[, c("classificacao", "limite", "limite_pl")],
+                                 by="classificacao")
+```
+
+
+Como os ativos que "criamos" (`ART7III#` e `ART7IV#`) não constam da tabela de limites, precisamos inserir "manualmente"" os valores dos limites relativos às restrições impostas pela Resolução CMN n. 3.922/10, o que faremos a seguir:
+
+```{r}
+dairLimitesAgregLiq <- dairLimitesAgregLiq %>%
+  mutate(limite  = ifelse(classificacao == "ART7III#", 60,
+                   ifelse(classificacao == "ART7IV#",  40, limite)))
+```
+
+A análise quanto aos limites deve levar em consideração o **Nivel** no qual o RPPS está classificado. Dependendo do Nível os limites de investimento são diferenciados. Os RPPS podem não estar classificados em nível algum, ou podem estar classificados como `Nivel I`, `Nivel II`, `Nivel III` ou `Nivel IV`.
+
+Considerando que bem poucos RPPS estão classificados em algum desses quatro níveis não vamos, por hora, considerá-los em nossa análise. Posteriormente iremos considerar esta situação na análise.
+
+Podemos agora fazer um gráfico para visualizarmos os percentuais aplicados pelos RPPS em cada tipo de ativo. Vamos dar uma olhada no município de São Gonçalo no RJ:
+
+```{r}
+ENTE <- "São Gonçalo"
+UF <- "RJ"
+
+dairLimitesAgregLiq %>%
+  filter(uf == UF, ente == ENTE) %>%
+  ggplot(aes(x=competencia, y=pctVlrTotalAtivoLiq)) +
+    geom_point() +
+    facet_wrap( ~ classificacao) +
+    geom_hline(aes(yintercept = limite), color="blue") +
+    labs(title = "Evolucao do Percentual Aplicado por Tipo de Ativo",
+         y = '% Aplicado', x=" ") +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 90, vjust=0.5)) +
+    scale_x_date(date_breaks="1 month", labels = date_format("%Y-%m"))
+
+```
+
+As linhas azuis indicam o limite permitido para cada tipo de ativo. Os pontos indicam os os percentuais que o RPPS possui aplicado em cada tipo de ativo.
+
+É importante destacar que nossa análise levou em consideração a **classificação dos ativos informada pelo RPPS ao preencher o DAIR**. Não obstante, conforme visto, existem divergências entre a classificação de alguns fundos de investimentos realizada pelo RPPS e a classificação realizada pela SPrev. Assim, essa mesma análise poderia/deveria ser feita considerando-se a **classificação dos fundos de investimentos realizada pela SPrev**. Oportunamente incluiremos esta análise nesse documento.
+
+
+
+
+</br>
+
+## Limite do Patrimônio Líquido dos Fundos de Investimentos
+
+Além de restrições em relação percentual dos recursos do RPPS que podem ser aplicados em cada tipo de ativo, a Resolução CMN n. 3.922/10 impõe restrições de aplicação de recursos com base no valor do patrimônio líquido do Fundo de Investimento (Art. 14).
+
+Neste tópico nosso objetivo verificar se esta restrição esta sendo cumprida pelo RPPS. Para esta verificação vamos partir da base de dados `dairLimites`.
+
+Primeiro vamos filtrar a base para obter os registros para os quais existam informações na variável `pl_fundo` ou `perc_pl_fundo`.
+
+```{r}
+dair_plfundo <- dairLimites %>%
+                      filter(!is.na(pl_fundo), !is.na(perc_pl_fundo))
+```
+
+A variável `perc_pl_fundo` indica o percentual que o valor que o RPPS possui investido no fundo representa do PL do mesmo. Vamos considerar os valores do PL do fundo constante da base de dados, e portanto informadas pelo RPPS como corretad, não obstante considerarmos que para uma verificação mais precisa esses valores deveriam ser obtidos jundo à CVM. 
+
+Vamos incluir na base de dados uma nova coluna com o cálculo do percentual que o valor aplicado no fundo (`vlr_total_atual`) representa do PL do fundo (`perc_pl_fundo`). Naturalmente que essa nova variável e a variável `perc_pl_fundo` devem ser iguais.
+
+```{r}
+dair_plfundo <- dair_plfundo %>%
+                  mutate(pct_pl_fundo_calc = round(vlr_total_atual / pl_fundo * 100, 2))
+```
+
+Vamos verificar se existem divergêncas entre as duas variáveis:
+
+```{r}
+dair_plfundo %>%
+  filter((perc_pl_fundo - pct_pl_fundo_calc) != 0) %>%
+  kable()
+```
+
+À exceção dos registros acima, não há divergências entre as variáveis `pct_pl_fundo_calc` e `perc_pl_fundo`.
+
+
+Agora vamos juntar a essa base de dados os limites de PL permitidos para cada tipo de fundo. Estes valores, como já mostrado anteriormente, estão contidos na base de dados `limites_cmn`.
+
+```{r}
+dair_plfundo <- dair_plfundo %>%
+                        left_join(limites_cmn[,c("classificacao", "limite_pl")],
+                                  by="classificacao")
+                          
+```
+
+Agora vamos criar uma nova variável que sinalizará se houve violação ao limite ou não e já faremos também o filtro para reter os registros em que houve violação dos limites.
+
+```{r}
+dair_plfundo <- dair_plfundo %>%
+                  mutate(estourou_limite_pl = ifelse((limite_pl - pct_pl_fundo_calc) < 0, 1, 0)) %>%
+                  filter(estourou_limite_pl == 1) %>%
+                  select(uf, ente, competencia, ident_ativo, nm_ativo, perc_pl_fundo, classificacao, limite_pl)
+```
+
+Vamos verificar quantos Entes estão na condição de terem violado essa regra.
+
+```{r}
+dair_plfundo %>%
+  distinct(uf, ente) %>%
+  count()
+```
+
+Vamos olhar a situação do município de Pinhais no estado do Paraná.
+
+```{r}
+ENTE <- "Pinhais"
+UF <- "PR"
+
+dair_plfundo %>% 
+  filter(uf == UF, ente == ENTE) %>%
+  arrange(competencia, ident_ativo, perc_pl_fundo) %>%
+  kable()
+
+```
+
+```{r}
+summary(dair_plfundo$perc_pl_fundo)
+```
+
+A variável apresenta valores claramente fora do que seria razoável.  Vamos identificar os RPPS para os quais o valor da variável `perc_pl_fundo` é maior do que 100%, o que é claramente um absurdo.
+
+```{r}
+filter(dair_plfundo, perc_pl_fundo > 100) %>%
+  kable()
+```
+
+
+</br>
+
+## Artigo 15 da Resolução CMN n. 3.922/10
+
+Outra alteração significativa promovida pela Resolução CMN nº 4.695/18 foi permitir novas aplicações de recursos dos RPPS apenas em fundos de investimento em que o administrador **ou** gestor seja instituição autorizada a funcionar pelo BACEN, obrigada a instituir comitê de auditoria e comitê de riscos, nos termos da regulamentação do CMN (art. 15, § 2º, I, § 8º da Resolução CMN nº 3.922/10).
+
+Os dados relativos às instituições financeiras que atendem à este dispositivo da Resolução foram extraídos do seguinte documento: `http://sa.previdencia.gov.br/site/2018/12/Instituicoes-financeiras-que-atendem-o-previsto-no-art.-15.pdf` disponível para _download_ no site da SPrev.
+
+Outro documento expedido pela SPrev contendo esclarecimentos sobre o artigo 15 da Resolução CMN n. 3.922/10 é `http://sa.previdencia.gov.br/site/2018/12/Esclarecimento-a-respeito-das-instituicoes-elegiveis_.pdf`.
+
+Um ponto que nos parece importante é que a exigência em questão foi introduzida com a edição da Resolução CMN n. 4.695/18, aprovada em reunião de **27.11.18**. Assim, nos parece conveniente que a análise se dê com os dados do DAIR relativos aos meses de Dezembro de 2018 em diante.
+
+Vamos filtrar a base de dados e extrair os registros relativos a fundos de investimentos e descartar colunas não necessárias a essa análise:
+
+```{r}
+art_15 <- invest %>% 
+              filter(competencia > ymd("2018-11-01"), grepl("\\d{14}", ident_ativo)) %>%
+              select(uf, ente, competencia, ident_ativo, nm_ativo)
+
+
+```
+
+
+Como já sabemos, a base de dados do DAIR não traz informações sobre quem são os administradores e gestores do fundo de investimento. Não obstante, a base de dados de enquadramento dos fundos disponibilizada pela SPrev e já utilizada anteriormente (`EnquadSPrev`) contém essa informação. Assim, parece razoável juntar as duas bases de dados (`art_15` e `EnquadSPrev`) de forma que a base de dados do DAIR passe a conter informação relativa ao administrador e gestor dos fundos: 
+
+
+```{r}
+art_15 <- art_15 %>%
+             left_join(EnquadSPrev[,c("cnpj", "nm_fundo", "cnpj_admin", "cnpj_gestor")],
+                       by=c("ident_ativo" = "cnpj"))
+
+# são acrescentadas observações... 
+```
+
+O passo seguinte é realizar o cruzamento da base de dados `art_15` com a lista dos administradores e gestores que atendem ao disposto no artigo 15 da Resolução CMN n. 3.922/10. 
+
+Os dados dos administradores e gestores "permitidos" constam do arquivo `AdministradorGestorFundos.xlsx` gerado a partir do documento disponibilizado pela SPrev. Vamos importar esses dados:
+
+```{r}
+setwd("..\\dados")
+administrador_gestor <- read_excel("AdministradorGestorFundos.xlsx")
+```
+
+Vamos agora cruzar os dados deste arquivo (`administrador_gestor`) com os dados relativos aos fundos de investimentos constantes da base do DAIR (`art_15`). Antes, contudo, algumas modificações nas bases de dados serão necessárias.
+
+Na base `administrador_gestor` vamos retirar a pontuação constante na variável `CNPJ` que identifica a instituição financeira.
+
+```{r}
+administrador_gestor <- administrador_gestor %>%
+                          mutate(CNPJ = gsub("[[:punct:]]", "", CNPJ))
+```
+
+
+Na base `art_15` precisamos extrair a raiz do CNPJ e a pontuação nas variáveis `cnpj_admin` e `cnpj_gestor`.
+
+```{r}
+art_15 <- art_15 %>%
+            mutate(cnpj_admin  = gsub("(.*)/\\d{4}-\\d{2}", "\\1", cnpj_admin),
+                   cnpj_admin  = gsub("[[:punct:]]", "", cnpj_admin),
+                   cnpj_gestor = gsub("(.*)/\\d{4}-\\d{2}", "\\1", cnpj_gestor),
+                   cnpj_gestor  = gsub("[[:punct:]]", "", cnpj_gestor))
+
+
+```
+
+Agora vamos identificar quais fundos possuem administrador ou gestor dentre os que são permitidos.
+
+```{r}
+art_15 <- art_15 %>%
+              mutate(adm_gest_permitido = ifelse(cnpj_admin  %in% administrador_gestor$CNPJ |
+                                                 cnpj_gestor %in% administrador_gestor$CNPJ, 1, 0))
+
+
+```
+
+Vamos agora verificar se algum RPPS possui investimentos em fundos que não atendem ao artigo 15 da Resolução CMN n. 3922/10: 
+
+```{r}
+
+art_15 <- art_15 %>%
+              filter(adm_gest_permitido == 0, !is.na(nm_fundo)) 
+
+
+```
+
+Vamos inspecionar a base de dados:
+
+```{r}
+kable(head(art_15))
+```
+
+Vamos obter uma lista dos fundos de investimento que estão nessa situação, qual seja, possuirem gestor e administrador que não estão entre os permitidos:
+
+```{r}
+fundos_art_15 <- art_15 %>%
+                    distinct(ident_ativo, nm_ativo)
+```
+
+Quantos são:
+
+```{r}
+nrow(fundos_art_15)
+```
+
+Quais RPPS tem aplicações neste tipo de fundo:
+
+```{r}
+entes_art_15 <- art_15 %>%
+                    distinct(uf, ente)
+
+```
+
+Quantos RPPS por UF?
+
+```{r}
+entes_art_15 %>% 
+  group_by(uf) %>% 
+  count() %>% 
+  arrange(desc(n)) %>%
+  kable()
+```
+
+Vamos verificar, por exemplo, se o RPPS de Belford Roxo no Estado do RJ investiu em algum desses fundos após novembro de 2018 ou se esses fundos já estavam na carteira do RPPS antes disso.
+
+```{r}
+## Obs. Em Barueri identifiquei que um mesmo fundo aparece mais de uma vez em um mesmo mês... Existem outros casos
+
+ENTE <- "Belford Roxo" 
+UF <-  "RJ"
+
+art_15 %>%
+  filter(uf == UF, ente == ENTE) %>%
+  group_by(uf, ente, nm_ativo, competencia) %>%
+  distinct(ident_ativo) %>%
+  select(uf, ente, competencia, ident_ativo, nm_ativo) %>%
+  spread(key=competencia, value=ident_ativo) %>%
+  kable()
+
+
+```
+
+
+
+

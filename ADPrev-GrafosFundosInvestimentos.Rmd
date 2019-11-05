@@ -1,0 +1,104 @@
+---
+title: "Uso de Grafos"
+author: "Marcos F Silva"
+date: "13 de outubro de 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(tidyr)
+```
+
+
+
+A importação do conjunto de dados pode ser feita da seguinte forma:
+
+```{r}
+setwd("C:\\Users\\Marcos\\Dropbox\\4_ShinyApps\\painel_previdenciario\\dados")
+dair <- readRDS("dair.Rds")
+dair <- dair %>% filter(!is.na(vlr_total_atual))
+```
+
+Importados os dados, o próximo passo é descartar todos os registros que não se refiram a fundos de investimentos. Para fazer isso vamos adotar a seguinte estratégia: pegar todos os registros em que a variável `ident_ativo` possua 14 dígitos. Esse pode não ser um procedimento muito preciso, mas já vai permitir uma boa filtrada nos dados.
+
+```{r}
+# Retenção dos registros relativos a aplicações em Fundos de Investimentos
+dair <- dair %>% 
+          filter(grepl("\\d{14}", ident_ativo))
+```
+
+Após essa primeita filtragem, vamos verificar os tipos de ativos ainda remanescentes.
+```{r}
+unique(dair$segmento)
+```
+
+Aparentemente o filtro removeu tudo o que não nos interessa.
+
+Vamos agora identificar na base os fundos vedados.
+
+```{r}
+setwd("C:\\Users\\Marcos\\Dropbox\\4_ShinyApps\\painel_previdenciario\\dados")
+fundos_vedados <- readRDS("fundos_vedados.Rds")
+fundos_vedados$`CNPJ DO FUNDO` <- gsub("[[:punct:]]", "", fundos_vedados$`CNPJ DO FUNDO`)
+dair$fundo_vedado <- ifelse(dair$ident_ativo %in% fundos_vedados$`CNPJ DO FUNDO`, TRUE, FALSE)
+```
+
+O próximo passo é aplicar um filtro para obter os dados relativos a um mês específico e a uma UF, por exemplo o Rio de Janeiro.
+
+```{r}
+dataref <- as.Date("2019-06-01")
+UF <- "RJ"
+
+dair_mes_uf <- dair %>% filter(competencia == dataref, uf == UF)
+```
+
+```{r}
+dair %>% 
+  filter(uf == "RJ") %>%
+  count(ente, competencia) %>%
+  spread(key=competencia, value=n)
+```
+
+
+
+
+```{r}
+library(igraph)
+library(visNetwork)
+```
+
+
+Vamos criar o grafo
+
+```{r}
+grafo <- graph_from_data_frame(dair_mes_uf[,c("ente", "ident_ativo", "tipo_ativo", "perc_recursos_rpps", "fundo_vedado")],  directed = FALSE)
+```
+
+Gráfico do Grafo Bruto
+
+```{r}
+plot(grafo,
+     vertex.size=7,
+     vertex.label=NA)
+```
+
+```{r}
+summary(grafo)
+```
+
+Fundos vedados
+
+```{r}
+# não tá funcionando isso aqui...
+grafo_filtrado <- subgraph.edges(grafo,
+                                 E(grafo)[inc(V(grafo)[V(grafo)$fundo_vedado])]
+                                )
+
+#plot(grafo_filtrado)
+```
+
